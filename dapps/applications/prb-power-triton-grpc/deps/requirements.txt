@@ -1,0 +1,7 @@
+--extra-index-url https://download.pytorch.org/whl/cu128
+pyzmq>=27
+onnx>=1.21.0rc3
+onnxscript>=0.6
+torch>=2.10
+flask>=3.1.2
+flask-cors>=6.0.1

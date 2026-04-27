@@ -1,0 +1,392 @@
+{
+  "_copyright": "SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. SPDX-License-Identifier: Apache-2.0",
+  "title": "E3 Protocol Message Examples",
+  "description": "Example messages for the E3 Application Protocol (E3AP) and dApp client interface.",
+  "version": "1.0.0",
+
+  "e3ap_message_examples": {
+
+    "setupRequest": {
+      "description": "dApp sends to E3 Agent via REQ socket to establish connection",
+      "message": {
+        "type": "setupRequest",
+        "id": 1,
+        "e3apProtocolVersion": "1.0.0",
+        "dAppName": "PRB Power",
+        "dAppVersion": "1.0.0",
+        "vendor": "NVIDIA"
+      }
+    },
+
+    "setupResponse_positive": {
+      "description": "Agent replies with assigned dAppIdentifier and available RAN functions",
+      "message": {
+        "type": "setupResponse",
+        "id": 1,
+        "requestId": 1,
+        "responseCode": "positive",
+        "e3apProtocolVersion": "1.0.0",
+        "dAppIdentifier": 1,
+        "ranIdentifier": "NVIDIA_L1",
+        "ranFunctionList": [
+          {
+            "ranFunctionIdentifier": 2,
+            "telemetryIdentifierList": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25],
+            "controlIdentifierList": [],
+            "ranFunctionData": [
+              {
+                "stream_id": "iq_samples",
+                "data_type": "array(int16)",
+                "description": "Raw IQ samples (Fronthaul data)",
+                "status": "available",
+                "delivery_method": {
+                  "transport_type": "shared_memory",
+                  "shared_memory_info": {
+                    "memory_key": "/e3_ran_buffers",
+                    "memory_size_bytes": 268435456,
+                    "num_rows": 2
+                  }
+                }
+              },
+              {
+                "stream_id": "h_estimates",
+                "data_type": "array(complex64)",
+                "description": "PUSCH H matrix estimates (first UE group only)",
+                "status": "available",
+                "delivery_method": {
+                  "transport_type": "shared_memory",
+                  "shared_memory_info": {
+                    "memory_key": "/e3_ran_buffers",
+                    "memory_size_bytes": 268435456,
+                    "num_rows": 2
+                  }
+                }
+              },
+              {
+                "stream_id": "timestamp",
+                "data_type": "uint64",
+                "description": "L1 software timestamp in nanoseconds",
+                "status": "available",
+                "delivery_method": { "transport_type": "protocolData", "keyword": "timestamp" }
+              },
+              {
+                "stream_id": "sfn",
+                "data_type": "uint16",
+                "description": "Network frame timing information",
+                "status": "available",
+                "delivery_method": { "transport_type": "protocolData", "keyword": "sfn" }
+              },
+              {
+                "stream_id": "slot",
+                "data_type": "uint16",
+                "description": "Network slot timing information",
+                "status": "available",
+                "delivery_method": { "transport_type": "protocolData", "keyword": "slot" }
+              },
+              {
+                "stream_id": "mcs_index",
+                "data_type": "uint8",
+                "description": "MCS index (should match value sent in DCI, range 0-31)",
+                "status": "available",
+                "delivery_method": { "transport_type": "protocolData", "keyword": "mcs_index" }
+              }
+            ]
+          }
+        ]
+      }
+    },
+
+    "setupResponse_negative": {
+      "description": "Agent rejects setup (e.g., protocol version mismatch)",
+      "message": {
+        "type": "setupResponse",
+        "id": 2,
+        "requestId": 1,
+        "responseCode": "negative",
+        "message": "protocol version mismatch",
+        "e3apProtocolVersion": "1.0.0"
+      }
+    },
+
+    "subscriptionRequest": {
+      "description": "dApp subscribes to telemetry streams on a specific RAN function via PUB socket. dAppIdentifier is added per-agent before publishing.",
+      "message": {
+        "type": "subscriptionRequest",
+        "id": 2,
+        "dAppIdentifier": 1,
+        "ranFunctionIdentifier": 2,
+        "telemetryIdentifierList": [1, 4, 5, 6],
+        "controlIdentifierList": [],
+        "periodicity": 100000,
+        "subscriptionTime": 0
+      },
+      "notes": {
+        "periodicity": "100000 microseconds = 100 ms between indications",
+        "subscriptionTime": "0 = indefinite (until explicit subscriptionDelete)"
+      }
+    },
+
+    "subscriptionResponse_positive": {
+      "description": "Agent confirms subscription with assigned subscriptionId and granted streams",
+      "message": {
+        "type": "subscriptionResponse",
+        "id": 3,
+        "requestId": 2,
+        "dAppIdentifier": 1,
+        "responseCode": "positive",
+        "subscriptionId": 1,
+        "ranFunctionIdentifier": 2,
+        "telemetryGrantedList": [1, 4, 5, 6],
+        "controlGrantedList": [],
+        "periodicity": 100000
+      }
+    },
+
+    "subscriptionResponse_negative": {
+      "description": "Agent rejects subscription",
+      "message": {
+        "type": "subscriptionResponse",
+        "id": 4,
+        "requestId": 2,
+        "dAppIdentifier": 1,
+        "responseCode": "negative",
+        "message": "missing or invalid parameters in subscription request"
+      }
+    },
+
+    "indicationMessage": {
+      "description": "Agent delivers telemetry data to subscribed dApp via PUB socket. Fields in protocolData depend on subscribed telemetryIdentifierList.",
+      "message": {
+        "type": "indicationMessage",
+        "id": 100,
+        "dAppIdentifier": 1,
+        "ranFunctionIdentifier": 2,
+        "subscriptionId": 1,
+        "protocolData": {
+          "timestamp": 1642248646678901234,
+          "sfn": 512,
+          "slot": 5,
+          "cell_id": 1,
+          "iq_samples": {
+            "shm_name": "/e3_ran_buffers",
+            "fh_buffer_index": 0,
+            "fh_write_index": 42
+          },
+          "h_estimates": {
+            "shm_name": "/e3_ran_buffers",
+            "hest_buffer_index": 1,
+            "hest_write_index": 42,
+            "hest_data_size": 3072
+          },
+          "n_bs_ants": 4,
+          "n_layers": 2,
+          "n_subcarriers": 768,
+          "n_dmrs_estimates": 2,
+          "rb_start": 0,
+          "rb_size": 64,
+          "start_symbol_index": 2,
+          "nr_of_symbols": 12,
+          "dmrs_symb_pos": 4164,
+          "mcs_index": 15,
+          "mcs_table_index": 0,
+          "qam_mod_order": 6,
+          "tb_crc_fail": 0
+        }
+      }
+    },
+
+    "subscriptionDelete": {
+      "description": "dApp cancels an active subscription via PUB socket. Agent responds with subscriptionResponse.",
+      "message": {
+        "type": "subscriptionDelete",
+        "id": 3,
+        "dAppIdentifier": 1,
+        "subscriptionId": 1
+      }
+    },
+
+    "subscriptionDelete_response": {
+      "description": "Agent confirms subscription deletion (reuses subscriptionResponse)",
+      "message": {
+        "type": "subscriptionResponse",
+        "id": 5,
+        "requestId": 3,
+        "dAppIdentifier": 1,
+        "responseCode": "positive",
+        "subscriptionId": 1
+      }
+    },
+
+    "dAppControlAction": {
+      "description": "dApp sends a control action to the agent via PUB socket. Agent may optionally reply with messageAck.",
+      "message": {
+        "type": "dAppControlAction",
+        "id": 4,
+        "dAppIdentifier": 1,
+        "ranFunctionIdentifier": 2,
+        "controlIdentifier": 0,
+        "actionData": {
+          "sfn": 512,
+          "slot": 5
+        }
+      }
+    },
+
+    "messageAck": {
+      "description": "Optional acknowledgement from agent (e.g., for control actions)",
+      "message": {
+        "type": "messageAck",
+        "id": 6,
+        "requestId": 4,
+        "dAppIdentifier": 1,
+        "responseCode": "negative",
+        "message": "control actions not implemented"
+      }
+    },
+
+    "releaseMessage_from_dapp": {
+      "description": "dApp tears down connection via PUB socket. No response required.",
+      "message": {
+        "type": "releaseMessage",
+        "id": 5,
+        "dAppIdentifier": 1
+      }
+    },
+
+    "releaseMessage_from_agent": {
+      "description": "Agent tears down connection via PUB socket (e.g., dApp inactivity timeout).",
+      "message": {
+        "type": "releaseMessage",
+        "id": 200,
+        "dAppIdentifier": 1
+      }
+    }
+  },
+
+  "message_flow_examples": {
+    "typical_session": {
+      "description": "Complete dApp session: setup, subscribe, receive indications, unsubscribe, release",
+      "sequence": [
+        { "step": 1, "direction": "dApp -> Agent", "socket": "REQ/REP", "type": "setupRequest", "note": "Establish connection" },
+        { "step": 2, "direction": "Agent -> dApp", "socket": "REQ/REP", "type": "setupResponse", "note": "dAppIdentifier assigned" },
+        { "step": 3, "direction": "dApp -> Agent", "socket": "PUB",     "type": "subscriptionRequest", "note": "Subscribe to telemetry" },
+        { "step": 4, "direction": "Agent -> dApp", "socket": "PUB",     "type": "subscriptionResponse", "note": "subscriptionId assigned" },
+        { "step": 5, "direction": "Agent -> dApp", "socket": "PUB",     "type": "indicationMessage", "note": "Repeats at granted periodicity" },
+        { "step": 6, "direction": "dApp -> Agent", "socket": "PUB",     "type": "subscriptionDelete", "note": "Cancel subscription" },
+        { "step": 7, "direction": "Agent -> dApp", "socket": "PUB",     "type": "subscriptionResponse", "note": "Deletion confirmed" },
+        { "step": 8, "direction": "dApp -> Agent", "socket": "PUB",     "type": "releaseMessage", "note": "Tear down connection" }
+      ]
+    },
+    "control_action_during_subscription": {
+      "description": "dApp sends a control action while subscribed (after steps 1-4 above)",
+      "sequence": [
+        { "step": 1, "direction": "dApp -> Agent", "socket": "PUB", "type": "dAppControlAction", "note": "Send control action" },
+        { "step": 2, "direction": "Agent -> dApp", "socket": "PUB", "type": "messageAck", "note": "Optional acknowledgement" }
+      ]
+    }
+  },
+
+  "client_command_examples": {
+    "_description": "Commands sent by external clients (e.g., e3_client.py or e3_e2e_test.py) to the dApp's ZMQ REP interface",
+
+    "subscribe": {
+      "description": "Subscribe to an E3 Agent's telemetry streams through the dApp",
+      "request": {
+        "cmd": "subscribe",
+        "agent": "NVIDIA_L1",
+        "telemetryIdentifierList": [1, 4, 5, 6],
+        "ranFunctionIdentifier": 2,
+        "periodicity": 100000,
+        "subscriptionTime": 5,
+        "model_name": "prb_power_numpy"
+      },
+      "response_success": {
+        "status": "sent",
+        "message": "subscription request sent",
+        "agent": "NVIDIA_L1"
+      },
+      "response_error": {
+        "status": "error",
+        "message": "No indication handler set"
+      }
+    },
+
+    "unsubscribe": {
+      "description": "Cancel subscription on a specific agent",
+      "request": {
+        "cmd": "unsubscribe",
+        "agent": "NVIDIA_L1"
+      },
+      "response_success": {
+        "status": "sent",
+        "message": "subscription delete sent",
+        "agent": "NVIDIA_L1"
+      }
+    },
+
+    "status": {
+      "description": "Query status of all agents and their subscriptions",
+      "request": {
+        "cmd": "status"
+      },
+      "response": {
+        "status": "ok",
+        "agents": [
+          {
+            "name": "NVIDIA_L1",
+            "state": "connected",
+            "is_subscribed": true,
+            "subscription_id": 1,
+            "subscription_status": "confirmed",
+            "model": "prb_power_numpy"
+          }
+        ]
+      }
+    },
+
+    "list_agents": {
+      "description": "List all configured E3 Agents",
+      "request": {
+        "cmd": "list_agents"
+      },
+      "response": {
+        "status": "ok",
+        "agents": [
+          {
+            "name": "NVIDIA_L1",
+            "host": "127.0.0.1",
+            "agent_rep_port": 5557,
+            "agent_pub_port": 5558,
+            "state": "connected"
+          }
+        ]
+      }
+    },
+
+    "e3_setup": {
+      "description": "Manually trigger E3 setup for a specific agent (or all if agent omitted)",
+      "request": {
+        "cmd": "e3_setup",
+        "agent": "NVIDIA_L1"
+      },
+      "response_success": {
+        "status": "ok",
+        "message": "setup complete",
+        "agent": "NVIDIA_L1"
+      }
+    },
+
+    "e3_release": {
+      "description": "Manually release E3 connection for a specific agent (or all if agent omitted)",
+      "request": {
+        "cmd": "e3_release",
+        "agent": "NVIDIA_L1"
+      },
+      "response_success": {
+        "status": "ok",
+        "message": "released",
+        "agent": "NVIDIA_L1"
+      }
+    }
+  }
+}

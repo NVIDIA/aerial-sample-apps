@@ -1,0 +1,3 @@
+tensorrt==10.14.1.48.post1
+tensorrt_cu13==10.14.1.48.post1
+tensorrt_cu13_bindings==10.14.1.48.post1

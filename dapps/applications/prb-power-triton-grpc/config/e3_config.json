@@ -1,0 +1,59 @@
+{
+  "_copyright": "SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. SPDX-License-Identifier: Apache-2.0",
+  "deployment": {
+    "ipc_mode": "container:nv-cubb",
+    "shared_memory": {
+      "key": "/e3_ran_buffers",
+      "required": true
+    }
+  },
+  "application": {
+    "name": "PRB Power Triton gRPC",
+    "version": "1.0.0",
+    "vendor": "NVIDIA",
+    "results_pub_port": 5559,
+    "enable_results_publishing": true
+  },
+  "e3_manager": {
+    "dapp_client_endpoint": "tcp://*:5558",
+    "e3_agents": [
+      {
+        "name": "NVIDIA_L1",
+        "host": "127.0.0.1",
+        "agent_rep_port": 5555,
+        "agent_pub_port": 5556,
+        "agent_sub_port": 5557,
+        "enabled": true,
+        "comment": "NVIDIA L1 E3 Agent"
+      },
+      {
+        "name": "OAI_L2",
+        "host": "127.0.0.1",
+        "agent_rep_port": 9990,
+        "agent_pub_port": 9991,
+        "agent_sub_port": 9999,
+        "enabled": false,
+        "comment": "OAI L2 E3 Agent"
+      }
+    ],
+    "default_model": "prb_power_numpy",
+    "auto_setup": true,
+    "subscription_response_timeout_s": 10,
+    "debug_enabled": false
+  },
+  "triton": {
+    "host": "localhost",
+    "http_port": 8000,
+    "grpc_port": 8001,
+    "metrics_port": 8002,
+    "model_repository": "/models",
+    "startup_timeout_seconds": 30,
+    "ready_timeout_seconds": 60,
+    "startup_retry_interval_seconds": 2
+  },
+  "logging": {
+    "directory": "/logs",
+    "triton_log": "triton.log",
+    "e3_manager_log": "e3_manager.log"
+  }
+} 
