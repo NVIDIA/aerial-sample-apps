@@ -19,8 +19,8 @@
 
 find_package(Python3 COMPONENTS Development NumPy QUIET)
 find_package(pybind11 QUIET)
-if(NOT Python3_FOUND OR NOT pybind11_FOUND)
-    message(STATUS "Skipping prb-power-python (Python3/pybind11 not found)")
+if(NOT Python3_FOUND OR NOT Python3_NumPy_FOUND OR NOT pybind11_FOUND)
+    message(STATUS "Skipping prb-power-python (Python3/NumPy/pybind11 not found)")
     return()
 endif()
 
