@@ -27,6 +27,7 @@
 #include <complex>
 #include <cstring>
 #include <signal.h>
+#include <atomic>
 
 using json = nlohmann::json;
 
@@ -115,22 +116,27 @@ static void ProcessPRBPower(const e3::IndicationContext& ctx) {
                     triton_input.data = e3::ShmInfo{pusch_base_offset + pusch_buffer_offset, (size_t)pusch_write_idx};
                     
                 } else if (payload_data.contains("hest_buffer_index")) {
-                    // H estimates from shared memory
+                    // Channel estimates (H) from shared memory (all UE groups concatenated)
                     SharedMemoryHeader* header = static_cast<SharedMemoryHeader*>(ran_shm_ptr);
                     uint8_t hest_buf_idx = payload_data.value("hest_buffer_index", 0u);
-                    uint32_t hest_write_idx = payload_data.value("hest_write_index", 0u);
-                    uint32_t hest_data_size = payload_data.value("hest_data_size", 0u);
-                    
+                    uint32_t hest_row_byte_off = payload_data.value("hest_row_byte_offset", 0u);
+
+                    // Total H-est size: max(h_offset + h_size) across ue_metrics[]
+                    uint32_t total_h_size = 0;
+                    if (indication_payload.contains("ue_metrics")) {
+                        for (const auto& ue : indication_payload["ue_metrics"]) {
+                            uint32_t end = ue.value("h_offset", 0u) + ue.value("h_size", 0u);
+                            if (end > total_h_size) total_h_size = end;
+                        }
+                    }
+                    if (total_h_size == 0) return;
+
                     size_t base_offset = sizeof(SharedMemoryHeader);
                     size_t hest_base_offset = base_offset + (2 * header->fh_buffer_size) + (2 * header->pusch_buffer_size);
                     size_t hest_buffer_offset = hest_buf_idx * header->hest_buffer_size;
-                    size_t row_offset = hest_write_idx * header->max_hest_samples_per_row * sizeof(std::complex<float>);
-                    size_t final_offset = hest_base_offset + hest_buffer_offset + row_offset;
-                    
-                    triton_input.data = e3::ShmInfo{final_offset, hest_data_size * sizeof(std::complex<float>)};
-                    
-                    // std::cout << "Prepared h_estimates input for Triton: " << hest_data_size 
-                    //           << " complex samples (" << hest_data_size * sizeof(std::complex<float>) << " bytes)" << std::endl;
+                    size_t final_offset = hest_base_offset + hest_buffer_offset + hest_row_byte_off;
+
+                    triton_input.data = e3::ShmInfo{final_offset, total_h_size * sizeof(std::complex<float>)};
                 } else {
                     std::cerr << "Warning: Unknown shared memory type for '" << model_input.name << "'. Skipping." << std::endl;
                     continue;
@@ -278,20 +284,17 @@ static void ProcessPRBPower(const e3::IndicationContext& ctx) {
 // Application configuration and entry point
 // ---------------------------------------------------------------------------
 
-static E3Manager* g_manager = nullptr;
+static std::atomic<bool> g_stop{false};
 
-static void signal_handler(int signal) {
-    if (g_manager) {
-        std::cout << "\nReceived signal " << signal << ", shutting down..." << std::endl;
-        g_manager->Stop();
-    }
+static void signal_handler(int) {
+    g_stop.store(true);
 }
 
 struct AppConfig {
     std::vector<E3Manager::E3AgentConfig> agents;
     std::string bind_addr = "tcp://*:5558";
     std::string dapp_name = "PRB Power";
-    std::string dapp_version = "1.0.0";
+    std::string dapp_version = "1.1.0";
     std::string vendor = "NVIDIA";
     std::string model_name = "prb_power_numpy";
     uint32_t subscription_response_timeout_s = 10;
@@ -299,7 +302,6 @@ struct AppConfig {
     bool enable_results_publishing = true;
     std::string shm_key = "/e3_ran_buffers";
     bool shm_required = true;
-    bool auto_setup = true;
     bool debug_enabled = false;
 
     // Triton
@@ -330,6 +332,18 @@ static AppConfig LoadConfig(const std::string& config_file) {
                 agent.agent_pub_port = a.value("agent_pub_port", 5556);
                 agent.agent_sub_port = a.value("agent_sub_port", 5557);
                 agent.enabled = true;
+                agent.auto_setup = a.value("auto_setup", true);
+                if (a.contains("subscription_options")) {
+                    const auto& so = a["subscription_options"];
+                    auto& sub = agent.auto_subscription;
+                    sub.enabled = so.value("auto_subscribe", false);
+                    sub.model = so.value("model", std::string{});
+                    sub.telemetry_ids = so.value("telemetry_ids", std::vector<uint32_t>{});
+                    sub.control_ids = so.value("control_ids", std::vector<uint32_t>{});
+                    sub.ran_function_id = so.value("ran_function_id", 2u);
+                    sub.periodicity_us = so.value("periodicity_us", 100000u);
+                    sub.subscription_time_s = so.value("subscription_time_s", 0u);
+                }
                 config.agents.push_back(agent);
             }
         }
@@ -349,7 +363,6 @@ static AppConfig LoadConfig(const std::string& config_file) {
             const auto& m = j["e3_manager"];
             config.bind_addr = m.value("dapp_client_endpoint", config.bind_addr);
             config.model_name = m.value("default_model", config.model_name);
-            config.auto_setup = m.value("auto_setup", config.auto_setup);
             config.subscription_response_timeout_s = m.value("subscription_response_timeout_s", config.subscription_response_timeout_s);
             config.debug_enabled = m.value("debug_enabled", config.debug_enabled);
         }
@@ -414,20 +427,22 @@ int main(int argc, char* argv[]) {
     E3Manager manager(config.bind_addr, config.agents, &engine, config.model_name,
                       config.dapp_name, config.dapp_version, config.vendor,
                       pub_port, config.subscription_response_timeout_s,
-                      config.shm_key, config.shm_required, config.auto_setup);
+                      config.shm_key, config.shm_required);
 
     manager.SetIndicationHandler(ProcessPRBPower);
     manager.debug_enabled = config.debug_enabled;
 
-    g_manager = &manager;
     manager.Start();
 
     std::cout << "PRB Power dApp (Triton C API) running. Press Ctrl+C to stop." << std::endl;
-    while (manager.IsRunning()) {
-        std::this_thread::sleep_for(std::chrono::seconds(1));
+    while (manager.IsRunning() && !g_stop.load()) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    }
+    if (g_stop.load()) {
+        std::cout << "\nReceived shutdown signal, stopping..." << std::endl;
+        manager.Stop();
     }
 
-    g_manager = nullptr;
     std::cout << "PRB Power dApp shutdown complete." << std::endl;
     return 0;
 }

@@ -30,7 +30,7 @@ Each application is a self-contained executable that connects to the shared E3 M
                          │
 ┌─────────────────────────────────────────────────────────────┐
 │  E3 Agent (NVIDIA Aerial cuBB L1, OAI L2, etc.)             │
-│  Shared Memory: IQ samples, H estimates                     │
+│  Shared Memory: IQ samples, H estimates, SRS IQ/Hest/RbSNR  │
 └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -42,40 +42,119 @@ Each application is a self-contained executable that connects to the shared E3 M
 
 ## Available Data Streams
 
-Data from the E3 Agent arrives in the indication payload JSON. All streams below are uplink data captured from the PUSCH pipeline. Large data (e.g., IQ samples, channel estimates) is delivered via shared memory references; small data (scalars, metadata) is inline.
+Data from the E3 Agent arrives in the indication payload JSON. Large data (e.g., IQ samples, channel estimates) is delivered via shared memory references; small data (scalars, metadata) is inline. Cell-level fields (timing, antenna count, shared memory references) are top-level keys in `protocolData`. Per-UE fields (RNTI, MCS, SINR, H-estimate metadata, SRS metrics, etc.) are delivered inside a `ue_metrics[]` array with one entry per scheduled UE.
 
-| Telemetry ID | Field | Transport | Description |
-|:---:|-------|-----------|-------------|
-| 1 | `iq_samples` | Shared memory | Post-FFT frequency-domain IQ data, pre-equalization (`fh_buffer_index`, `fh_write_index`) |
-| 2 | `pdu_data` | Shared memory | PUSCH data (`pusch_buffer_index`, `pusch_write_index`) |
-| 3 | `h_estimates` | Shared memory | DMRS-based channel estimates, pre-equalization (`hest_buffer_index`, `hest_write_index`, `hest_data_size`) |
-| 4 | `timestamp_ns` | Inline JSON | Agent-side timestamp (nanoseconds) |
-| 5 | `sfn` | Inline JSON | System Frame Number |
-| 6 | `slot` | Inline JSON | Slot Number |
-| 7 | `cell_id` | Inline JSON | Physical Cell ID |
-| 8 | `n_rx_ant` | Inline JSON | Number of RX antennas |
-| 9 | `n_rx_ant_srs` | Inline JSON | Number of RX antennas for SRS |
-| 10 | `n_cells` | Inline JSON | Number of cells |
-| 11 | `n_bs_ants` | Inline JSON | Number of base station antennas |
-| 12 | `n_layers` | Inline JSON | Number of MIMO layers |
-| 13 | `n_subcarriers` | Inline JSON | Number of subcarriers |
-| 14 | `n_dmrs_estimates` | Inline JSON | Number of DMRS estimates |
-| 15 | `dmrs_symb_pos` | Inline JSON | DMRS symbol positions |
-| 16 | `tb_crc_fail` | Inline JSON | Transport block CRC failure indicator |
-| 17 | `cb_errors` | Inline JSON | Code block error count |
-| 18 | `rsrp` | Inline JSON | Reference Signal Received Power |
-| 19 | `cqi` | Inline JSON | Channel Quality Indicator |
-| 20 | `cb_count` | Inline JSON | Code block count |
-| 21 | `rssi` | Inline JSON | Received Signal Strength Indicator |
-| 22 | `qam_mod_order` | Inline JSON | QAM modulation order |
-| 23 | `mcs_index` | Inline JSON | Modulation and Coding Scheme index |
-| 24 | `mcs_table_index` | Inline JSON | MCS table index |
-| 25 | `rb_start` | Inline JSON | Resource block start position |
-| 26 | `rb_size` | Inline JSON | Resource block allocation size |
-| 27 | `start_symbol_index` | Inline JSON | Start OFDM symbol index |
-| 28 | `nr_of_symbols` | Inline JSON | Number of OFDM symbols |
+Indications arrive on two independent paths:
+- **PUSCH** — fires once per PUSCH slot
+- **SRS** — fires once per SRS slot (sparser; periodicity depends on the gNB cell config)
 
-See `data_representation.md` for shared memory layout details and `e3_message_schemas.json` for the full E3AP and E3SM NVIDIA KPM message formats.
+Some streams are **shared** (delivered on both paths when subscribed); others are exclusive to one path. If a subscription contains only PUSCH-exclusive IDs, only PUSCH indications fire; if it contains only SRS-exclusive IDs, only SRS indications fire. Shared-only subscriptions fire on both paths. See `e3_message_schemas.json` for the per-field path affinity, and the firing matrix at the end of this section.
+
+**Shared streams** (delivered on both PUSCH and SRS indication paths):
+
+| ID | Field | Path | Scope | Transport | Description |
+|:--:|-------|:----:|:-----:|-----------|-------------|
+| 4 | `timestamp` | Shared | Cell | Inline | Software timestamp (ns) captured when Data Lake processes the slot |
+| 5 | `sfn` | Shared | Cell | Inline | System Frame Number |
+| 6 | `slot` | Shared | Cell | Inline | Slot Number |
+| 7 | `cell_id` | Shared | Cell | Inline | Physical Cell ID |
+| 9 | `n_rx_ant_srs` | Shared | Cell | Inline | Number of SRS RX antennas |
+| 10 | `n_cells` | Shared | Cell | Inline | Number of cells |
+| 33 | `rnti` | Shared | Per-UE | Inline | Radio Network Temporary Identifier |
+| 78 | `timestamp_tai` | Shared | Cell | Inline | TAI timestamp (ns) aligned from SFN/slot via grandmaster clock |
+
+**PUSCH streams** (delivered only on the PUSCH indication path):
+
+| ID | Field | Path | Scope | Transport | Description |
+|:--:|-------|:---:|:-----:|-----------|-------------|
+| 1 | `iq_samples` | PUSCH | Cell | SHM | Post-FFT frequency-domain IQ Samples, before equalization (`fh_buffer_index`, `fh_write_index`) |
+| 2 | `pdu_data` | PUSCH | Cell | SHM | PUSCH PDU bytes (`pusch_buffer_index`, `pusch_write_index`) |
+| 3 | `h_estimates` | PUSCH | Cell | SHM | PUSCH DMRS channel estimates, before equalization (`hest_buffer_index`, `hest_write_index`, `hest_row_byte_offset`) |
+| 8 | `n_rx_ant` | PUSCH | Cell | Inline | Number of RX antennas |
+| 11 | `n_bs_ants` | PUSCH | Cell | Inline | Number of base station antennas in H-estimates |
+| 12 | `n_layers` | PUSCH | Per-UE | Inline | Spatial layers for this UE |
+| 13 | `n_subcarriers` | PUSCH | Per-UE | Inline | Subcarriers in the group allocation |
+| 14 | `n_dmrs_estimates` | PUSCH | Per-UE | Inline | DMRS symbol count in the group |
+| 15 | `dmrs_symb_pos` | PUSCH | Per-UE | Inline | DMRS symbol position bitmask |
+| 16 | `tb_crc_fail` | PUSCH | Per-UE | Inline | Transport block CRC failure indicator |
+| 17 | `cb_errors` | PUSCH | Per-UE | Inline | Code block error count |
+| 18 | `rsrp` | PUSCH | Per-UE | Inline | Reference Signal Received Power (dB) |
+| 19 | `noise_var` | PUSCH | Per-UE | Inline | Noise+interference variance (dB), pre- or post-eq per `enable_pusch_sinr` (pre by default) |
+| 20 | `cb_count` | PUSCH | Per-UE | Inline | Code block count |
+| 21 | `rssi` | PUSCH | Per-UE | Inline | Received Signal Strength Indicator (dB, per-group) |
+| 22 | `qam_mod_order` | PUSCH | Per-UE | Inline | QAM modulation order |
+| 23 | `mcs_index` | PUSCH | Per-UE | Inline | MCS index |
+| 24 | `mcs_table_index` | PUSCH | Per-UE | Inline | MCS table index |
+| 25 | `rb_start` | PUSCH | Per-UE | Inline | Resource block start (per-group) |
+| 26 | `rb_size` | PUSCH | Per-UE | Inline | Resource block allocation size (per-group) |
+| 27 | `start_symbol_index` | PUSCH | Per-UE | Inline | Start OFDM symbol index (per-group) |
+| 28 | `nr_of_symbols` | PUSCH | Per-UE | Inline | PUSCH duration in symbols (per-group) |
+| 29 | `tb_size` | PUSCH | Per-UE | Inline | Transport block size (bytes) |
+| 30 | `pdu_len` | PUSCH | Per-UE | Inline | PDU length (tb_size on CRC pass, 0 on fail) |
+| 31 | `target_code_rate` | PUSCH | Per-UE | Inline | Target code rate x10 |
+| 32 | `new_data_indicator` | PUSCH | Per-UE | Inline | New data indicator |
+| 34 | `n_ue` | PUSCH | Cell | Inline | Number of PUSCH UEs in this slot |
+| 35 | `layer_offset` | PUSCH | Per-UE | Inline | Starting layer in group H matrix (0 for FDM) |
+| 36 | `ue_grp_idx` | PUSCH | Per-UE | Inline | cuPHY internal UE group index |
+| 37 | `h_offset` | PUSCH | Per-UE | Inline | Element offset (float2) of group H data in SHM row |
+| 38 | `h_size` | PUSCH | Per-UE | Inline | Element count (float2) of group H blob |
+| 39 | `sinr` | PUSCH | Per-UE | Inline | SINR (dB), pre- or post-eq per `enable_pusch_sinr` (pre by default) |
+| 40 | `timing_advance` | PUSCH | Per-UE | Inline | Timing advance estimate |
+| 41 | `harq_process_id` | PUSCH | Per-UE | Inline | HARQ process ID (0-15) |
+| 42 | `rv_index` | PUSCH | Per-UE | Inline | Redundancy version index (0-3) |
+| 43 | `cfo_hz` | PUSCH | Per-UE | Inline | Carrier Frequency Offset in Hz |
+
+**SRS streams** (delivered only on the SRS indication path):
+
+| ID | Field | Path | Scope | Transport | Description |
+|:--:|-------|:---:|:-----:|-----------|-------------|
+| 44 | `srs_iq_samples` | SRS | Cell | SHM | Raw SRS IQ (`srs_iq_buffer_index`, `srs_iq_write_index`, `srs_iq_row_byte_offset`) |
+| 45 | `srs_hest` | SRS | Cell | SHM | SRS H-estimates (`srs_hest_buffer_index`, `srs_hest_write_index`) |
+| 46 | `srs_hest_n_prb_grps` | SRS | Per-UE | Inline | PRB groups in SRS H-estimate grid |
+| 47 | `srs_hest_offset` | SRS | Per-UE | Inline | Byte offset of UE H-estimate blob in SHM buffer |
+| 48 | `srs_hest_size` | SRS | Per-UE | Inline | Byte count of UE H-estimate blob |
+| 49 | `srs_rb_snr` | SRS | Cell | SHM | SRS per-PRG SNR in dB (`srs_rb_snr_buffer_index`, `srs_rb_snr_write_index`) |
+| 50 | `srs_rb_snr_offset` | SRS | Per-UE | Inline | Byte offset of UE RbSNR blob in SHM buffer |
+| 51 | `srs_rb_snr_size` | SRS | Per-UE | Inline | Byte count of UE RbSNR blob |
+| 52 | `srs_cell_start_sym` | SRS | Cell | Inline | SRS starting OFDM symbol index |
+| 53 | `srs_cell_n_srs_sym` | SRS | Cell | Inline | Number of SRS OFDM symbols |
+| 54 | `n_srs_ue` | SRS | Cell | Inline | Number of SRS UEs in this slot |
+| 55 | `srs_wideband_snr` | SRS | Per-UE | Inline | Wideband SNR in dB |
+| 56 | `srs_signal_energy` | SRS | Per-UE | Inline | Wideband signal energy |
+| 57 | `srs_noise_energy` | SRS | Per-UE | Inline | Wideband noise energy (noise floor) |
+| 58 | `srs_toa` | SRS | Per-UE | Inline | Timing-of-arrival estimate (microseconds) |
+| 59 | `srs_hd_ant_flag` | SRS | Per-UE | Inline | High-density antenna port flag (1 = SNR unreliable) |
+| 60 | `srs_sc_corr` | SRS | Per-UE | Inline | Wideband subcarrier correlation [re, im] as array(float32) |
+| 61 | `srs_cs_corr_ratio_db` | SRS | Per-UE | Inline | Correlation energy on used vs unused cyclic shifts (dB) |
+| 62 | `srs_ant_ports` | SRS | Per-UE | Inline | SRS antenna ports (1, 2, or 4) |
+| 63 | `srs_n_syms` | SRS | Per-UE | Inline | Number of SRS symbols (1, 2, or 4) |
+| 64 | `srs_n_repetitions` | SRS | Per-UE | Inline | Repetition factor (1, 2, or 4) |
+| 65 | `srs_comb_size` | SRS | Per-UE | Inline | Comb size (2 or 4) |
+| 66 | `srs_comb_offset` | SRS | Per-UE | Inline | Comb offset (0-3) |
+| 67 | `srs_start_sym` | SRS | Per-UE | Inline | UE starting OFDM symbol (0-13) |
+| 68 | `srs_cyclic_shift` | SRS | Per-UE | Inline | Cyclic shift (0-11) |
+| 69 | `srs_freq_position` | SRS | Per-UE | Inline | Frequency-domain position (0-67) |
+| 70 | `srs_freq_shift` | SRS | Per-UE | Inline | Frequency-domain shift (0-268) |
+| 71 | `srs_freq_hopping` | SRS | Per-UE | Inline | Frequency hopping b_hop (0-3) |
+| 72 | `srs_resource_type` | SRS | Per-UE | Inline | 0=aperiodic, 1=semi-persistent, 2=periodic |
+| 73 | `srs_t_srs` | SRS | Per-UE | Inline | Periodicity in slots |
+| 74 | `srs_t_offset` | SRS | Per-UE | Inline | Slot offset |
+| 75 | `srs_usage` | SRS | Per-UE | Inline | Bitmask: 0x1=beamMgmt, 0x2=codebook, 0x4=nonCodebook, 0x8=antennaSwitching |
+| 76 | `srs_n_valid_prg` | SRS | Per-UE | Inline | Number of valid PRB groups (= rb_snr length) |
+| 77 | `srs_prg_size` | SRS | Per-UE | Inline | PRBs per PRB-group |
+
+**Indication firing matrix** (which path(s) fire for a given subscription mix):
+
+| Subscription mix | PUSCH fires | SRS fires |
+|------------------|:-----------:|:---------:|
+| Only shared (e.g. `sfn` + `slot`) | yes | yes |
+| Shared + PUSCH-only (e.g. `sfn` + `rsrp`) | yes | no |
+| Shared + SRS-only (e.g. `rnti` + `srs_wideband_snr`) | no | yes |
+| PUSCH-only + SRS-only | yes | yes |
+| Only PUSCH-only | yes | no |
+| Only SRS-only | no | yes |
+
+See `data_representation.md` for shared memory layout details (PUSCH and SRS), and `e3_message_schemas.json` for the full E3AP and E3SM NVIDIA KPM message formats.
 
 ## Building a New Application
 
@@ -117,18 +196,23 @@ using IndicationHandler = std::function<void(const IndicationContext& ctx)>;
 
 The `agent_name` field identifies which E3 Agent produced the indication (e.g. `"NVIDIA_L1"`, `"OAI_L2"`). This is essential for multi-agent dApps that receive data from different network layers and need to dispatch to different extraction logic per agent.
 
+PUSCH and SRS indications invoke the same handler; distinguish the path by checking for a field that only one path provides (e.g. `iq_samples` for PUSCH, `srs_iq_samples` for SRS). Subscriptions made only of shared streams, such as `sfn` and `slot`, fire on both paths and give indistinguishable payloads.
+
 Your handler has full control over what happens with the data. You can run inference through an engine, process data directly in C++/Python, or anything else.
 
 #### Minimal handler example
 
-Reads inline metadata from the indication payload and logs it (assuming you have subscribed to those telemetry streams):
+Reads cell-level and per-UE metadata from the indication payload (assuming you have subscribed to those telemetry streams):
 
 ```cpp
 static void ProcessMyApp(const e3::IndicationContext& ctx) {
-    int sfn = ctx.payload.value("sfn", 0);
-    int slot = ctx.payload.value("slot", 0);
-    int mcs = ctx.payload.value("mcs_index", -1);
-    LOG_INFO("sfn={} slot={} mcs={}", sfn, slot, mcs);
+    int sfn = ctx.payload.value("sfn", 0);       // cell-level
+    int slot = ctx.payload.value("slot", 0);      // cell-level
+    for (const auto& ue : ctx.payload["ue_metrics"]) {
+        int rnti = ue.value("rnti", 0);           // per-UE
+        int mcs = ue.value("mcs_index", -1);      // per-UE
+        LOG_INFO("sfn={} slot={} rnti={} mcs={}", sfn, slot, rnti, mcs);
+    }
 }
 ```
 
@@ -157,7 +241,7 @@ static void ProcessMyApp(const e3::IndicationContext& ctx) {
         const auto& data = ctx.payload[model_input.name];
 
         if (data.is_object() && data.contains("fh_buffer_index")) {
-            // Shared memory reference (zero-copy)
+            // PUSCH FH IQ shared memory reference (zero-copy)
             SharedMemoryHeader* hdr = static_cast<SharedMemoryHeader*>(ctx.ran_shm_ptr);
             uint8_t buf_idx = data.value("fh_buffer_index", 0u);
             uint32_t write_idx = data.value("fh_write_index", 0u);
@@ -165,6 +249,11 @@ static void ProcessMyApp(const e3::IndicationContext& ctx) {
             size_t base = sizeof(SharedMemoryHeader) + buf_idx * hdr->fh_buffer_size;
             size_t row = write_idx * hdr->num_fh_samples * sizeof(int16_t);
             tin.data = e3::ShmInfo{base + row, hdr->num_fh_samples * sizeof(int16_t)};
+        } else if (data.is_object() && data.contains("srs_iq_buffer_index")) {
+            // SRS IQ / SRS Hest / SRS RbSNR follow the same pattern with
+            // their own buffer_index/write_index fields and header sizes
+            // (srs_iq_buffer_size, srs_hest_buffer_size, srs_rb_snr_buffer_size).
+            // See data_representation.md for full offset computation.
         } else {
             // Scalar value (inline JSON)
             // Convert to raw bytes based on model_input.type
@@ -208,7 +297,7 @@ int main(int argc, char* argv[]) {
                       config.model_name, config.dapp_name,
                       config.dapp_version, config.vendor,
                       pub_port, config.subscription_response_timeout_s,
-                      config.shm_key, config.shm_required, config.auto_setup);
+                      config.shm_key, config.shm_required);
 
     // 5. Register your handler and start
     manager.SetIndicationHandler(ProcessMyApp);
@@ -271,11 +360,19 @@ Create `config/e3_config.json`. The structure follows the same pattern as the PR
         "agent_rep_port": 5555,
         "agent_pub_port": 5556,
         "agent_sub_port": 5557,
-        "enabled": true
+        "enabled": true,
+        "auto_setup": true,
+        "subscription_options": {
+          "auto_subscribe": true,
+          "telemetry_ids": [1, 4, 5, 6],
+          "control_ids": [],
+          "ran_function_id": 2,
+          "periodicity_us": 100000,
+          "subscription_time_s": 0
+        }
       }
     ],
     "default_model": "my_model",
-    "auto_setup": true,
     "subscription_response_timeout_s": 10,
     "debug_enabled": false
   }
@@ -283,6 +380,8 @@ Create `config/e3_config.json`. The structure follows the same pattern as the PR
 ```
 
 **Note:** Agent ports (`agent_rep_port`, `agent_pub_port`, `agent_sub_port`) must match the E3 Agent's port configuration (e.g., `e3_rep_port`, `e3_pub_port`, `e3_sub_port` in the cuphycontroller YAML for Aerial L1).
+
+**Auto setup and auto subscription (per agent):** `auto_setup` (default `true`) makes the E3 Manager send the E3 Setup to that agent on startup and re-send it automatically if the connection drops. `subscription_options.auto_subscribe` (default `false`) extends this to the subscription: once the agent is connected, the manager subscribes with the configured `telemetry_ids` / `control_ids` / `ran_function_id` / `periodicity_us` / `subscription_time_s`, with no external client required. After a RAN restart, the manager re-runs setup and then re-subscribes. `model` is optional; omit it to use `default_model`. If the inference model or backend is not ready yet, the manager retries auto-subscribe for up to 60s before disabling it; an explicit rejection, a response timeout, or an `unsubscribe`/`release` stops it immediately. On shutdown the manager sends an E3 Release to all connected agents. Both flags are per agent, so different agents can use different lifecycle policies (e.g., one auto-driven, one client-driven).
 
 ### Step 6: Containerize
 
@@ -397,9 +496,11 @@ The TDD pattern affects the effective data rate. With a typical DDDDDDSUUU patte
 
 If the natural TDD gaps are not sufficient, set the periodicity to at least your worst-case processing time. For example, if inference takes ~4 ms, request a periodicity of 5000 us (`-p 5000`) instead of receiving one indication every slot. Alternatively, the handler could accumulate multiple indications and batch them before running inference, which can improve throughput for models that benefit from batched input.
 
+SRS indications arrive much less frequently than PUSCH: the period is `T_SRS` slots (per `srs_t_srs` in `ue_metrics[]`, typically 40-160 slots, i.e. 20-80 ms with 30 kHz SCS). A subscription with `-p 0` on SRS streams will still only fire on actual SRS slots, not every slot.
+
 ### Extensibility
 
-The data streams listed in the Available Data Streams table above represent the current NVIDIA KPM Service Model (RAN Function ID 2). This set is not fixed:
+The data streams listed in the Available Data Streams tables above represent the current NVIDIA KPM Service Model (RAN Function ID 2). This set is not fixed:
 
 - **New telemetry streams** can be added to the E3 Agent to expose additional data. New fields appear in the indication JSON payload automatically without changes to the dApp framework. See the E3 Agent source code or open a GitHub issue to request new streams.
 - **Multiple E3 Agents**: A single dApp can connect to multiple E3 Agents simultaneously (configured in `e3_config.json` under `e3_agents`). Each agent can expose different data from different network layers, and the dApp receives indications from all of them.
@@ -409,7 +510,7 @@ The data streams listed in the Available Data Streams table above represent the 
 
 Set `debug_enabled` to `true` in `e3_config.json` (or pass `--debug` at startup) to print all incoming indication metadata and raw data summaries to the console. This is useful for verifying which telemetry streams are arriving, inspecting payload contents, and understanding the shared memory data layout before writing custom processing logic.
 
-The debug handler (`common/e3_manager/debug_utils.cpp`) includes additional flags for offline analysis of channel estimates:
+The debug handler (`common/e3_manager/debug_utils.cpp`) includes additional flags for offline analysis of PUSCH channel estimates:
 
 - `ENABLE_HEST_BINARY_SAVE`: Write raw H-estimate data to binary files
 - `ENABLE_HEST_CSV_SAVE`: Write H-estimate data to CSV files
@@ -422,11 +523,23 @@ You can also capture raw E3 messages on the wire using tcpdump on the ZMQ port:
 sudo tcpdump -i lo -A -s 0 'tcp port 5556'
 ```
 
+## Standalone Development and Testing
+
+The [E3 Agent Standalone](https://github.com/NVIDIA/aerial-cuda-accelerated-ran/tree/main/cuPHY-CP/e3agent-standalone) tool builds and tests dApps without a full RAN. It runs the production E3 Agent and feeds its shared memory from a local source, either a config-driven synthetic generator or a recorded telemetry trace. The dApp sees the exact same subscriptions, indication schema, and shared memory layout as against a live cuBB L1, making it a useful addition to the development workflow:
+
+- **Fast development without a full RAN**: iterate on dApp logic without cuPHY, FAPI, live radio, or a GPU pipeline.
+- **Deterministic replay and debugging**: replay a fixed trace, paced by its captured TAI timing, for reproducible runs.
+- **Comparable tests across dApps**: drive different dApps from the same trace to compare behavior on identical input.
+- **Smooth path to live deployment**: logic developed here runs unchanged against a real L1.
+
+See the [E3 Agent Standalone README](https://github.com/NVIDIA/aerial-cuda-accelerated-ran/tree/main/cuPHY-CP/e3agent-standalone) for setup and usage.
+
 ## Further Reading
 
 - [e3_message_schemas.json](e3_message_schemas.json): E3AP and E3SM message schemas
 - [e3_message_examples.json](e3_message_examples.json): Example messages and client commands
-- [data_representation.md](data_representation.md): Shared memory layout for IQ samples and H estimates
+- [data_representation.md](data_representation.md): Shared memory layout for PUSCH and SRS data streams (e.g., IQ and H estimates)
+- [E3 Agent Standalone](https://github.com/NVIDIA/aerial-cuda-accelerated-ran/tree/main/cuPHY-CP/e3agent-standalone): Standalone E3 Agent for dApp development and testing (synthetic generation or trace replay)
 - [prb-power-python](../applications/prb-power-python/): Reference implementation (embedded Python)
 - [prb-power-triton](../applications/prb-power-triton/): Reference implementation (Triton C API)
 - [prb-power-triton-grpc](../applications/prb-power-triton-grpc/): Reference implementation (Triton gRPC)

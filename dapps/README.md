@@ -8,8 +8,7 @@ Real-time RAN data processing framework using a pre-standard version of the E3 i
 .
 ├── common/                             # Shared core (engine-agnostic)
 │   ├── e3_manager/                     # E3 Manager: E3AP protocol, multi-agent, shared memory
-│   ├── client/                         # dApp client scripts for testing and control
-│   └── deps/                           # Shared dependencies (nlohmann/json, etc.)
+│   └── client/                         # dApp client scripts for testing and control
 ├── applications/                       # Individual dApp Logic implementations
 │   ├── prb-power-python/              # PRB Power dApp with embedded Python
 │   ├── prb-power-triton/              # PRB Power dApp with Triton C API
@@ -51,6 +50,7 @@ The E3 Agent exposes the following uplink data streams through the NVIDIA KPM Se
 | Channel quality | RSRP, RSSI, CQI, MCS index, QAM order | PHY-layer measurements and modulation parameters |
 | PUSCH | TB CRC fail, CB errors, CB count | Transport/code block error indicators |
 | Resource allocation | RB start, RB size, Symbols, Subcarriers, MIMO layers | Frequency/time resource assignment |
+| SRS | SRS IQ, SRS channel estimates, per-RB SNR, SRS data | Uplink SRS samples, per-UE channel estimates, and per-band SNR |
 
 This list reflects the currently supported telemetry streams. Additional data streams and service models may be added in future releases. See `docs/application_development_guide.md` for the full per-field telemetry ID table and shared memory layout details.
 
@@ -59,6 +59,8 @@ This list reflects the currently supported telemetry streams. Additional data st
 ### 1. Start the gNB
 
 Start the gNB with E3 Agent capabilities (e.g., cuBB with `data_core` and `e3_agent_enable` options enabled in the cuphycontroller YAML) and connect a UE.
+
+> **Note:** The [E3 Agent Standalone](https://github.com/NVIDIA/aerial-cuda-accelerated-ran/tree/main/cuPHY-CP/e3agent-standalone) tool allows the E3 Agent to run without a full RAN, feeding it synthetic or replayed telemetry. The dApp side is identical, so logic developed there runs unchanged against a live L1.
 
 ### 2. Build and Run
 
@@ -77,12 +79,12 @@ cd applications/prb-power-triton-grpc && ./restart_script.sh
 
 ### 3. Subscribe to Data and Run Application Logic
 
-From another terminal, run the end-to-end test to subscribe to telemetry streams:
+From another terminal, run the end-to-end test to subscribe to telemetry streams (note that `prb-power-python` auto-subscribes on startup by default, while the triton variants do not, since they serve multiple models):
 
 ```bash
-docker exec -it dapp-prb-power-python \
+docker exec -it dapp-prb-power-triton \
     /opt/src/common/client/e3_e2e_test.py \
-    -a NVIDIA_L1 -t 1,4,5,6 -d 10
+    -a NVIDIA_L1 -m prb_power_numpy -t 1,4,5,6 -d 10
 ```
 
 This subscribes to IQ samples (1), SFN (5), slot (6), and timestamp (4) from agent `NVIDIA_L1`, waits 10 seconds while the dApp runs inference, then unsubscribes and verifies cleanup.
@@ -93,7 +95,7 @@ Expected output:
   ✓ Agent listing PASSED
   ✓ Initial status check PASSED
   ✓ Subscription request sent
-  [PRB Power Python] SFN/Slot: 123/4 Inference successful. Latency: 810us
+  [PRB Power Triton] SFN/Slot: 123/4 Inference successful. Latency: 1197us
   ✓ Subscription delete request sent
   ✓ Status shows no agent is subscribed
   --- Test Complete ---
@@ -112,7 +114,7 @@ Use `-i` for interactive mode (press Enter to advance each step). Run with `--he
 | `-s, --subscription-time` | `0` | Server-side subscription TTL (seconds, 0=indefinite) |
 | `-i, --interactive` | off | Step-by-step mode with prompts |
 
-For individual dApp operations (check status, subscribe, unsubscribe, setup, release), use `e3_client.py`. With `auto_setup: true` (default), setup runs automatically on startup. See the [Application Development Guide](docs/application_development_guide.md#testing-and-client-tools) for the full command reference.
+For individual dApp operations (check status, subscribe, unsubscribe, setup, release), use `e3_client.py`. With per-agent `auto_setup: true` (default), setup runs automatically on startup and after a reconnect; an agent can also set `subscription_options.auto_subscribe` to subscribe on its own, with no client required. See the [Application Development Guide](docs/application_development_guide.md#testing-and-client-tools) for the full command reference.
 
 ## Documentation
 
@@ -121,11 +123,11 @@ Technical documentation is available in `docs/`:
 - **[application_development_guide.md](docs/application_development_guide.md)**: How to build a new dApp application
 - **[e3_message_schemas.json](docs/e3_message_schemas.json)**: E3AP and E3SM message schemas (JSON Schema format)
 - **[e3_message_examples.json](docs/e3_message_examples.json)**: Example messages and client commands
-- **[data_representation.md](docs/data_representation.md)**: Shared memory data layout for IQ samples and H estimates
+- **[data_representation.md](docs/data_representation.md)**: Shared memory data layout for PUSCH and SRS data streams (e.g., IQ and H estimates)
 
 ## License and Citation
 
-This project is licensed under a mix of Apache 2.0 and MIT licenses. See the LICENSE file for details.
+This project is licensed under the Apache 2.0 license. See the LICENSE file for details.
 
 If you use this software in your research, please cite:
 
@@ -140,16 +142,16 @@ If you use this software in your research, please cite:
 
 ## References
 
-[1] D. Villa, M. Belgiovine, N. Hedberg, M. Polese, C. Dick, and T. Melodia, "Programmable and GPU-Accelerated Edge Inference for Real-Time ISAC on NVIDIA Aerial Testbed," arXiv:2512.06493 \[cs.NI\], 2026. [pdf](https://arxiv.org/pdf/2512.06493)
+[1] **NVIDIA dApp Framework:** D. Villa, M. Belgiovine, N. Hedberg, M. Polese, C. Dick, and T. Melodia, "Programmable and GPU-Accelerated Edge Inference for Real-Time ISAC on NVIDIA Aerial Testbed," arXiv:2512.06493 \[cs.NI\], 2026. [arXiv PDF](https://arxiv.org/pdf/2512.06493)
 
-[2] S. D'Oro, M. Polese, L. Bonati, H. Cheng, and T. Melodia, "dApps: Distributed Applications for Real-time Inference and Control in O-RAN," *IEEE Communications Magazine*, 2022. [pdf](https://arxiv.org/pdf/2203.02370.pdf)
+[2] **dApps Concept:** S. D'Oro, M. Polese, L. Bonati, H. Cheng, and T. Melodia, "dApps: Distributed Applications for Real-time Inference and Control in O-RAN," *IEEE Communications Magazine*, 2022. [arXiv PDF](https://arxiv.org/pdf/2203.02370.pdf)
 
-[3] Northeastern University, NVIDIA, and Mavenir, "dApps Architecture and Interfaces," *O-RAN next Generation Research Group (nGRG)*, Research Report, 2025, report ID: RR-2025-05, v2.0. [pdf](https://mediastorage.o-ran.org/ngrg-rr/nGRG-RR-2025-05-dApps%20Architecture%20and%20Interfaces-v2.0.pdf)
+[3] **O-RAN nGRG First Research Report:** Northeastern University, NVIDIA, Mavenir, MITRE, and Qualcomm, "dApps for Real-Time RAN Control: Use Cases and Requirements," *O-RAN next Generation Research Group (nGRG)*, Research Report, Oct 2024, report ID: RR-2024-10. [Report PDF](https://mediastorage.o-ran.org/ngrg-rr/nGRG-RR-2024-10-dApp%20use%20cases%20and%20requirements.pdf)
 
-[4] Northeastern University, NVIDIA, Mavenir, MITRE, and Qualcomm, "dApps for Real-Time RAN Control: Use Cases and Requirement," *O-RAN next Generation Research Group (nGRG)*, Research Report, Oct 2024, report ID: RR-2024-10. [pdf](https://mediastorage.o-ran.org/ngrg-rr/nGRG-RR-2024-10-dApp%20use%20cases%20and%20requirements.pdf)
+[4] **O-RAN nGRG Second Research Report:** Northeastern University, SoftBank, NVIDIA, "dApps Architecture and Interfaces," *O-RAN next Generation Research Group (nGRG)*, Research Report, 2025, report ID: RR-2025-05, v2.0. [Report PDF](https://mediastorage.o-ran.org/ngrg-rr/nGRG-RR-2025-05-dApps%20Architecture%20and%20Interfaces-v2.0.pdf)
 
-[5] A. Lacava, L. Bonati, N. Mohamadi, R. Gangula, F. Kaltenberger, P. Johari, S. D'Oro, F. Cuomo, M. Polese, and T. Melodia, "dApps: Enabling Real-Time AI-Based Open RAN Control," *Computer Networks*, vol. 269, pp. 111342, 2025. [pdf](https://www.sciencedirect.com/science/article/pii/S1389128625003093)
+[5] **E3 Interface:** A. Lacava, L. Bonati, N. Mohamadi, R. Gangula, F. Kaltenberger, P. Johari, S. D'Oro, F. Cuomo, M. Polese, and T. Melodia, "dApps: Enabling Real-Time AI-Based Open RAN Control," *Computer Networks*, vol. 269, pp. 111342, 2025. [ScienceDirect](https://www.sciencedirect.com/science/article/pii/S1389128625003093)
 
-[6] NVIDIA Corporation, "NVIDIA Aerial CUDA-Accelerated RAN," GitHub. [link](https://github.com/NVIDIA/aerial-cuda-accelerated-ran)
+[6] NVIDIA Corporation, "Aerial CUDA-Accelerated RAN," GitHub. [GitHub repo](https://github.com/NVIDIA/aerial-cuda-accelerated-ran)
 
-[7] NVIDIA Corporation, "Aerial RAN CoLab Over-the-Air (ARC-OTA)," NVIDIA Developer Documentation. [link](https://docs.nvidia.com/aerial/aerial-ran-colab-ota/current/index.html)
+[7] NVIDIA Corporation, "Aerial Testbed," NVIDIA Developer Documentation. [NVIDIA Docs](https://docs.nvidia.com/aerial/testbed/latest/index.html)

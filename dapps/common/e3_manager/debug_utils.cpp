@@ -32,7 +32,7 @@ using json = nlohmann::json;
 namespace e3 {
 
 // Debug control flags
-static const bool ENABLE_VERBOSE_DEBUG = true;     // Verbose console output
+static const bool ENABLE_VERBOSE_DEBUG = false;     // Verbose console output
 static const bool ENABLE_HEST_BINARY_SAVE = false;  // Save H-estimates to binary files
 static const bool ENABLE_HEST_CSV_SAVE = false;     // Save H-estimates to CSV files
 
@@ -77,6 +77,7 @@ static float fp16_to_fp32(uint16_t h) {
 }
 
 void ProcessIQSampleDebug(const json& indication_payload, void* ran_shm_ptr) {
+    if (!ENABLE_VERBOSE_DEBUG) return;
     if (!indication_payload.contains("iq_samples") || ran_shm_ptr == nullptr) {
         return;
     }
@@ -153,332 +154,270 @@ void ProcessIQSampleDebug(const json& indication_payload, void* ran_shm_ptr) {
 }
 
 void PrintMetadataDebug(const json& payload) {
-    std::cout << "\n=== Indication Metadata ===" << std::endl;
+    std::cout << "=== Indication Metadata ===" << std::endl;
+
+    std::cout << "  Cell: {";
+    bool first = true;
     for (const auto& [key, value] : payload.items()) {
-        if (value.is_object()) {
-            std::cout << key << ": " << value.dump() << std::endl;
-        } else {
-            std::cout << key << ": " << value << std::endl;
+        if (key == "ue_metrics") continue;
+        if (!first) std::cout << ",";
+        std::cout << "\"" << key << "\":" << value.dump();
+        first = false;
+    }
+    std::cout << "}" << std::endl;
+
+    if (payload.contains("ue_metrics") && payload["ue_metrics"].is_array()) {
+        for (size_t i = 0; i < payload["ue_metrics"].size(); ++i) {
+            std::cout << "  UE " << i << ": " << payload["ue_metrics"][i].dump() << std::endl;
         }
     }
     std::cout << "=============================" << std::endl;
 }
 
 void ProcessHEstimatesDebug(const json& indication_payload, void* ran_shm_ptr) {
-    if (!indication_payload.contains("h_estimates") || ran_shm_ptr == nullptr) {
+    if (!ENABLE_VERBOSE_DEBUG && !ENABLE_HEST_BINARY_SAVE && !ENABLE_HEST_CSV_SAVE) return;
+    if (!indication_payload.contains("h_estimates") || !indication_payload.contains("ue_metrics") ||
+        ran_shm_ptr == nullptr) {
         return;
     }
 
     uint16_t sfn = indication_payload.value("sfn", 0u);
     uint16_t slot = indication_payload.value("slot", 0u);
     uint64_t timestamp_ns = indication_payload.value("timestamp", 0ull);
-    
-    // Extract metadata
     uint8_t n_bs_ants = indication_payload.value("n_bs_ants", 0u);
-    uint8_t n_layers = indication_payload.value("n_layers", 0u);
-    uint16_t n_subcarriers = indication_payload.value("n_subcarriers", 0u);
-    uint8_t n_dmrs_estimates = indication_payload.value("n_dmrs_estimates", 0u);
-    
+
     const json& hest_data = indication_payload["h_estimates"];
+    const json& ue_metrics = indication_payload["ue_metrics"];
     SharedMemoryHeader* header = static_cast<SharedMemoryHeader*>(ran_shm_ptr);
-    
+
     uint8_t hest_buf_idx = hest_data.value("hest_buffer_index", 0u);
     uint32_t hest_write_idx = hest_data.value("hest_write_index", 0u);
-    uint32_t hest_data_size = hest_data.value("hest_data_size", 0u);
-    
-    if (ENABLE_VERBOSE_DEBUG) {
-        std::cout << "\n=== H Estimates Debug Info (dApp) ===" << std::endl;
-        std::cout << "SFN/Slot: " << sfn << "/" << slot << std::endl;
-        std::cout << "Data index: " << hest_write_idx << " in buffer: " << (hest_buf_idx == 0 ? "ping" : "pong") << std::endl;
-        std::cout << "H-estimates size: " << hest_data_size << " complex<float> samples" << std::endl;
-    }
-    
-    if (hest_data_size == 0) {
-        if (ENABLE_VERBOSE_DEBUG) {
-            std::cout << "No H estimates data for this slot" << std::endl;
-            std::cout << "==============================\n" << std::endl;
-        }
+    uint32_t hest_row_byte_off = hest_data.value("hest_row_byte_offset", 0u);
+    if (hest_buf_idx >= 2 || hest_row_byte_off >= header->hest_buffer_size) {
+        std::cerr << " OOB indication (buf_idx=" << +hest_buf_idx
+                  << " offset=" << hest_row_byte_off
+                  << " hest_buffer_size=" << header->hest_buffer_size << "), skipping." << std::endl;
         return;
     }
-    
-    // Calculate base addresses for both buffers
+    if (hest_row_byte_off % sizeof(std::complex<float>) != 0) {
+        std::cerr << " Misaligned hest_row_byte_offset=" << hest_row_byte_off
+                  << " (not a multiple of " << sizeof(std::complex<float>)
+                  << " bytes), skipping." << std::endl;
+        return;
+    }
+
+    // Compute SHM row base pointer (v1.1.0: byte offset from indication, no fixed stride)
     size_t base_offset = sizeof(SharedMemoryHeader);
     size_t hest_base_offset = base_offset + (2 * header->fh_buffer_size) + (2 * header->pusch_buffer_size);
-    
+    size_t hest_buffer_offset = hest_buf_idx * header->hest_buffer_size;
+    const size_t remaining_samples = (header->hest_buffer_size - hest_row_byte_off) / sizeof(std::complex<float>);
+    const std::complex<float>* row_ptr = reinterpret_cast<const std::complex<float>*>(
+        static_cast<const uint8_t*>(ran_shm_ptr) + hest_base_offset + hest_buffer_offset + hest_row_byte_off);
+
     if (ENABLE_VERBOSE_DEBUG) {
-        uint8_t* base_ptr = reinterpret_cast<uint8_t*>(header + 1);
-        const std::complex<float>* hest_buf0_ptr = reinterpret_cast<const std::complex<float>*>(
-            static_cast<uint8_t*>(ran_shm_ptr) + hest_base_offset);
-        const std::complex<float>* hest_buf1_ptr = reinterpret_cast<const std::complex<float>*>(
-            static_cast<uint8_t*>(ran_shm_ptr) + hest_base_offset + header->hest_buffer_size);
-        
-        std::cout << "\nH-estimates Buffer memory layout:" << std::endl;
-        std::cout << "Buffer base address (ping): " << (void*)hest_buf0_ptr << std::endl;
-        std::cout << "Buffer base address (pong): " << (void*)hest_buf1_ptr << std::endl;
-        std::cout << "Max samples per row: " << header->max_hest_samples_per_row << std::endl;
-        std::cout << "Size per row: " << header->max_hest_samples_per_row * sizeof(std::complex<float>) << " bytes" << std::endl;
-        
-        std::cout << "\n=== Buffer Start Analysis ===" << std::endl;
-        for (int buf = 0; buf < 2; buf++) {
-            const std::complex<float>* buf_start = (buf == 0) ? hest_buf0_ptr : hest_buf1_ptr;
-            std::cout << "Buffer " << buf << " (" << (buf == 0 ? "ping" : "pong") << ") first 10 complex values:" << std::endl;
-            for (int i = 0; i < 10 && i < (int)header->max_hest_samples_per_row; i++) {
-                std::cout << "  [" << i << "]: (" << std::fixed << std::setprecision(6) 
-                          << buf_start[i].real() << "," << buf_start[i].imag() << "j)" << std::endl;
-            }
-            
-            std::cout << "Buffer " << buf << " first sample from first 5 rows:" << std::endl;
-            for (int row = 0; row < 5 && row < (int)header->num_hest_rows; row++) {
-                const std::complex<float>* row_start = buf_start + (row * header->max_hest_samples_per_row);
-                std::cout << "  Row " << row << ": (" << std::fixed << std::setprecision(6) 
-                          << row_start[0].real() << "," << row_start[0].imag() << "j)" << std::endl;
-            }
-        }
-        
-        std::cout << "\n=== MEMORY LAYOUT VERIFICATION (dApp) ===" << std::endl;
-        size_t header_size = sizeof(SharedMemoryHeader);
+        std::cout << "\n=== H Estimates Debug (per-UE) ===" << std::endl;
+        std::cout << "SFN/Slot: " << sfn << "/" << slot
+                  << "  buffer: " << (hest_buf_idx == 0 ? "ping" : "pong")
+                  << "  write_idx: " << hest_write_idx
+                  << "  n_bs_ants: " << (int)n_bs_ants
+                  << "  n_ue: " << ue_metrics.size() << std::endl;
+
         size_t fh_total = 2 * header->fh_buffer_size;
         size_t pusch_total = 2 * header->pusch_buffer_size;
         size_t hest_total = 2 * header->hest_buffer_size;
         size_t expected_hest_offset = base_offset + fh_total + pusch_total;
-        
-        size_t shm_total_size = header_size + fh_total + pusch_total + hest_total;
-        std::cout << "Shared memory total size: " << shm_total_size << " bytes" << std::endl;
-        std::cout << "Header size: " << header_size << " bytes" << std::endl;
-        std::cout << "Base pointer after header: " << (void*)base_ptr << std::endl;
-        std::cout << "FH buffer size: " << header->fh_buffer_size << " bytes each (" << fh_total << " total)" << std::endl;
-        std::cout << "PUSCH buffer size: " << header->pusch_buffer_size << " bytes each (" << pusch_total << " total)" << std::endl;
-        std::cout << "HEST buffer size: " << header->hest_buffer_size << " bytes each (" << hest_total << " total)" << std::endl;
-        std::cout << "Expected HEST start offset: " << expected_hest_offset << " bytes" << std::endl;
-        
-        size_t actual_hest0_offset = reinterpret_cast<size_t>(hest_buf0_ptr) - reinterpret_cast<size_t>(ran_shm_ptr);
-        size_t actual_hest1_offset = reinterpret_cast<size_t>(hest_buf1_ptr) - reinterpret_cast<size_t>(ran_shm_ptr);
-        
-        std::cout << "Actual HEST buffer 0 offset: " << actual_hest0_offset << " bytes" << std::endl;
-        std::cout << "Actual HEST buffer 1 offset: " << actual_hest1_offset << " bytes" << std::endl;
-        
-        if (actual_hest0_offset == expected_hest_offset) {
-            std::cout << "[OK] HEST buffer 0 offset matches expected!" << std::endl;
-        } else {
-            std::cout << "[ERROR] HEST buffer 0 offset MISMATCH! Expected: " << expected_hest_offset 
-                      << ", Actual: " << actual_hest0_offset << " (diff: " 
-                      << (int64_t)actual_hest0_offset - (int64_t)expected_hest_offset << ")" << std::endl;
-        }
-        
-        if (actual_hest1_offset == expected_hest_offset + header->hest_buffer_size) {
-            std::cout << "[OK] HEST buffer 1 offset matches expected!" << std::endl;
-        } else {
-            std::cout << "[ERROR] HEST buffer 1 offset MISMATCH! Expected: " << (expected_hest_offset + header->hest_buffer_size)
-                      << ", Actual: " << actual_hest1_offset << " (diff: " 
-                      << (int64_t)actual_hest1_offset - (int64_t)(expected_hest_offset + header->hest_buffer_size) << ")" << std::endl;
-        }
-        std::cout << "=========================================" << std::endl;
+        size_t actual_hest0_offset = hest_base_offset;
+        size_t actual_hest1_offset = hest_base_offset + header->hest_buffer_size;
 
-        std::cout << "\n=== DATA TYPE INTERPRETATION VERIFICATION ===" << std::endl;
-        std::cout << "std::complex<float> size: " << sizeof(std::complex<float>) << " bytes" << std::endl;
-        std::cout << "hest_data_size: " << hest_data_size << " complex samples" << std::endl;
-        std::cout << "Physical layout: [" << (int)n_dmrs_estimates << ", " << n_subcarriers 
-                  << ", " << (int)n_bs_ants << ", " << (int)n_layers << "] (row-major)" << std::endl;
-        std::cout << "Allocated subcarriers: " << n_subcarriers << " (" << n_subcarriers / 12 << " PRBs)" << std::endl;
-        std::cout << "==========================================" << std::endl;
+        std::cout << "SHM layout: header=" << base_offset << " FH=" << fh_total
+                  << " PUSCH=" << pusch_total << " HEST=" << hest_total
+                  << " total=" << (base_offset + fh_total + pusch_total + hest_total) << " bytes" << std::endl;
+        std::cout << "HEST offset: expected=" << expected_hest_offset
+                  << " actual_buf0=" << actual_hest0_offset
+                  << " actual_buf1=" << actual_hest1_offset
+                  << " max_per_row=" << header->max_hest_samples_per_row
+                  << (actual_hest0_offset == expected_hest_offset ? " [OK]" : " [MISMATCH]") << std::endl;
     }
-    
-    // Calculate offset to H estimates data
-    size_t hest_buffer_offset = hest_buf_idx * header->hest_buffer_size;
-    size_t row_offset = hest_write_idx * header->max_hest_samples_per_row * sizeof(std::complex<float>);
-    size_t total_offset = hest_base_offset + hest_buffer_offset + row_offset;
-    
-    if (ENABLE_VERBOSE_DEBUG) {
-        std::cout << "\n[dApp] Reading from shared memory:" << std::endl;
-        std::cout << "  hest_buffer_index: " << (int)hest_buf_idx << std::endl;
-        std::cout << "  hest_write_index: " << hest_write_idx << std::endl;
-        std::cout << "  Offset calculation:" << std::endl;
-        std::cout << "    base_offset: " << base_offset << " bytes" << std::endl;
-        std::cout << "    hest_base_offset: " << hest_base_offset << " bytes" << std::endl;
-        std::cout << "    hest_buffer_offset: " << hest_buffer_offset << " bytes" << std::endl;
-        std::cout << "    row_offset: " << row_offset << " bytes (write_idx=" << hest_write_idx 
-                  << " × max_per_row=" << header->max_hest_samples_per_row << " × 8)" << std::endl;
-        std::cout << "    total_offset: " << total_offset << " bytes" << std::endl;
-    }
-    
-    const std::complex<float>* hest_ptr = reinterpret_cast<const std::complex<float>*>(
-        static_cast<const uint8_t*>(ran_shm_ptr) + total_offset);
-    
-    if (ENABLE_VERBOSE_DEBUG) {
-        std::cout << "  Memory address: " << (void*)hest_ptr << std::endl;
-        
-        // Print first few samples
-        const size_t samples_to_print = std::min(20u, hest_data_size);
-        std::cout << "\nFirst " << samples_to_print << " H-estimate complex samples:" << std::endl;
-        for (size_t i = 0; i < samples_to_print; ++i) {
-            const auto& sample = hest_ptr[i];
-            std::cout << "  [" << i << "]: "
-                      << "(" << sample.real() << ", " << sample.imag() << "j) "
-                      << "magnitude: " << std::abs(sample) << std::endl;
+
+    for (size_t i = 0; i < ue_metrics.size(); ++i) {
+        const auto& ue = ue_metrics[i];
+        uint16_t rnti = ue.value("rnti", 0u);
+        uint8_t n_layers = ue.value("n_layers", 0u);
+        uint16_t layer_offset = ue.value("layer_offset", 0u);
+        uint16_t ue_grp_idx = ue.value("ue_grp_idx", 0u);
+        uint32_t h_offset = ue.value("h_offset", 0u);
+        uint32_t h_size = ue.value("h_size", 0u);
+        uint16_t n_subcarriers = ue.value("n_subcarriers", 0u);
+        uint8_t n_dmrs_estimates = ue.value("n_dmrs_estimates", 0u);
+
+        if (h_size == 0) continue;
+        if (static_cast<size_t>(h_offset) + h_size > remaining_samples) {
+            std::cerr << " UE " << i << " OOB (h_offset=" << h_offset
+                      << " h_size=" << h_size << " remaining=" << remaining_samples
+                      << "), skipping." << std::endl;
+            continue;
         }
-        
-        // Print last few samples if we have enough data
-        if (hest_data_size > 20) {
-            std::cout << "\nLast " << samples_to_print << " H-estimate complex samples:" << std::endl;
-            for (size_t i = hest_data_size - samples_to_print; i < hest_data_size; ++i) {
-                const auto& sample = hest_ptr[i];
-                std::cout << "  [" << i << "]: "
-                          << "(" << sample.real() << ", " << sample.imag() << "j) "
-                          << "magnitude: " << std::abs(sample) << std::endl;
+
+        const std::complex<float>* grp_ptr = row_ptr + h_offset;
+
+        if (ENABLE_VERBOSE_DEBUG) {
+            std::cout << "  UE " << i << " rnti=" << rnti << " grp=" << ue_grp_idx
+                      << " layers=" << (int)n_layers << " layer_off=" << layer_offset
+                      << " h_offset=" << h_offset << " h_size=" << h_size
+                      << " sc=" << n_subcarriers << " dmrs=" << (int)n_dmrs_estimates << std::endl;
+
+            float max_mag = 0.0f, sum_mag = 0.0f;
+            for (uint32_t s = 0; s < h_size; ++s) {
+                float mag = std::abs(grp_ptr[s]);
+                sum_mag += mag;
+                if (mag > max_mag) max_mag = mag;
+            }
+            uint32_t n_layers_group = (n_subcarriers && n_bs_ants && n_dmrs_estimates)
+                ? h_size / (n_subcarriers * n_bs_ants * n_dmrs_estimates) : 0;
+            std::cout << "    avg_mag=" << std::fixed << std::setprecision(4) << (sum_mag / h_size)
+                      << "  max_mag=" << max_mag
+                      << "  bytes=" << h_size * sizeof(std::complex<float>)
+                      << "  n_layers_group=" << n_layers_group << std::endl;
+
+            const uint32_t N_PRINT = std::min(10u, h_size);
+            std::cout << "    first " << N_PRINT << " samples:";
+            for (uint32_t s = 0; s < N_PRINT; ++s) {
+                std::cout << " (" << grp_ptr[s].real() << "," << grp_ptr[s].imag() << "j)";
+            }
+            std::cout << std::endl;
+            if (h_size > N_PRINT) {
+                std::cout << "    last  " << N_PRINT << " samples:";
+                for (uint32_t s = h_size - N_PRINT; s < h_size; ++s) {
+                    std::cout << " (" << grp_ptr[s].real() << "," << grp_ptr[s].imag() << "j)";
+                }
+                std::cout << std::endl;
             }
         }
-        
-        // Calculate statistics
-        float max_magnitude = 0.0f, avg_magnitude = 0.0f;
-        for (size_t i = 0; i < hest_data_size; ++i) {
-            float mag = std::abs(hest_ptr[i]);
-            avg_magnitude += mag;
-            if (mag > max_magnitude) max_magnitude = mag;
+
+        if (ENABLE_HEST_BINARY_SAVE) {
+            SaveChannelEstimatesBinary(grp_ptr, h_size, n_bs_ants, n_layers, layer_offset,
+                                       n_subcarriers, n_dmrs_estimates,
+                                       rnti, ue_grp_idx, sfn, slot, timestamp_ns);
         }
-        avg_magnitude /= hest_data_size;
-        
-        std::cout << "\nH Estimates Statistics:" << std::endl;
-        std::cout << "  Average magnitude: " << avg_magnitude << std::endl;
-        std::cout << "  Maximum magnitude: " << max_magnitude << std::endl;
-        std::cout << "  Total bytes: " << hest_data_size * sizeof(std::complex<float>) << std::endl;
+
+        if (ENABLE_HEST_CSV_SAVE) {
+            SaveChannelEstimatesCSV(grp_ptr, h_size, n_bs_ants, n_layers, layer_offset,
+                                    n_subcarriers, n_dmrs_estimates,
+                                    rnti, sfn, slot, timestamp_ns);
+        }
     }
-    
-    // Save data in binary format
-    if (ENABLE_HEST_BINARY_SAVE) {
-        SaveChannelEstimatesBinary(hest_ptr, hest_data_size, n_bs_ants, n_layers, 
-                                   n_subcarriers, n_dmrs_estimates, sfn, slot, timestamp_ns);
-    }
-    
-    // Save data in CSV format
-    if (ENABLE_HEST_CSV_SAVE) {
-        SaveChannelEstimatesCSV(hest_ptr, hest_data_size, n_bs_ants, n_layers, 
-                                n_subcarriers, n_dmrs_estimates, sfn, slot, timestamp_ns);
-    }
-    
+
     if (ENABLE_VERBOSE_DEBUG) {
-        std::cout << "==============================\n" << std::endl;
+        std::cout << "==================================\n" << std::endl;
     }
 }
 
 void SaveChannelEstimatesCSV(
-    const std::complex<float>* hest_ptr,
-    uint32_t hest_data_size,
+    const std::complex<float>* grp_ptr,
+    uint32_t h_size,
     uint8_t n_bs_ants,
     uint8_t n_layers,
+    uint16_t layer_offset,
     uint16_t n_subcarriers,
     uint8_t n_dmrs_estimates,
+    uint16_t rnti,
     uint16_t sfn,
     uint16_t slot,
     uint64_t timestamp_ns) {
-    
-    if (hest_ptr == nullptr || hest_data_size == 0 || n_bs_ants == 0) {
-        return;
-    }
-    
+
+    if (grp_ptr == nullptr || h_size == 0 || n_bs_ants == 0 || n_subcarriers == 0 ||
+        n_dmrs_estimates == 0) return;
+
+    // Derive total layers in this group's tensor from known dimensions
+    uint32_t n_layers_group = h_size / (n_subcarriers * n_bs_ants * n_dmrs_estimates);
+    if (n_layers_group == 0) return;
+
     try {
-        // Calculate samples per antenna
-        int samples_per_ant = (n_layers * n_subcarriers * n_dmrs_estimates);
-        
-        if (samples_per_ant <= 0 || n_bs_ants * samples_per_ant > hest_data_size) {
-            std::cout << "Skipping data save: dimension mismatch" << std::endl;
-            return;
-        }
-        
         ensureOutputDir();
-        
+
         auto now = std::chrono::system_clock::now();
         auto time_t = std::chrono::system_clock::to_time_t(now);
-        auto ms = std::chrono::duration_cast<std::chrono::microseconds>(now.time_since_epoch()) % 1000000;
-        
+        auto us = std::chrono::duration_cast<std::chrono::microseconds>(now.time_since_epoch()) % 1000000;
+
         std::stringstream filename_ss;
         filename_ss << "hest_" << std::put_time(std::gmtime(&time_t), "%Y%m%d_%H%M%S") << "_"
-                   << std::setfill('0') << std::setw(6) << ms.count() << "_"
+                   << std::setfill('0') << std::setw(6) << us.count() << "_"
                    << std::setfill('0') << std::setw(5) << sfn << "_"
-                   << std::setfill('0') << std::setw(2) << slot << ".csv";
-        
+                   << std::setfill('0') << std::setw(2) << slot << "_"
+                   << "rnti" << rnti << ".csv";
+
         std::string filepath = HEST_OUTPUT_DIR + "/" + filename_ss.str();
-        
+
         std::ofstream csv_file(filepath);
         if (!csv_file.is_open()) {
             std::cerr << "Failed to open file for writing: " << filepath << std::endl;
             return;
         }
-        
-        // Write header
-        csv_file << "# Channel Estimates Data for SFN.Slot: " << sfn << "." << slot << std::endl;
+
+        csv_file << "# H Estimates for SFN.Slot: " << sfn << "." << slot << " RNTI: " << rnti << std::endl;
         csv_file << "# timestamp_ns: " << timestamp_ns << std::endl;
-        csv_file << "# n_bs_ants=" << (int)n_bs_ants << ", n_layers=" << (int)n_layers 
+        csv_file << "# n_bs_ants=" << (int)n_bs_ants << ", n_layers=" << (int)n_layers
+                 << ", layer_offset=" << layer_offset << ", n_layers_group=" << n_layers_group
                  << ", n_subcarriers=" << n_subcarriers << ", n_dmrs_estimates=" << (int)n_dmrs_estimates << std::endl;
-        csv_file << "# Physical memory layout: [dmrs][subcarrier][antenna][layer] (row-major)" << std::endl;
-        csv_file << "# CSV format: Each row is a subcarrier, columns are antennas (layer=0, dmrs=0)" << std::endl;
-        
+        csv_file << "# Layout: [dmrs][subcarrier][antenna][layer] row-major. Showing first UE layer, dmrs=0." << std::endl;
+
         csv_file << "subcarrier";
         for (int ant = 0; ant < n_bs_ants; ++ant) {
             csv_file << ",ant" << ant << "_magnitude";
         }
         csv_file << std::endl;
-        
-        // Write data for each subcarrier (layer 0, DMRS estimate 0)
-        // Data is stored as [dmrs][subcarrier][antenna][layer], so for dmrs=0, layer=0:
-        // Index formula: (0 * n_subcarriers * n_bs_ants * n_layers) + (subcarrier * n_bs_ants * n_layers) + (ant * n_layers) + 0
-        // Simplifies to: ant + n_bs_ants * subcarrier (for single layer)
-        for (int subcarrier = 0; subcarrier < n_subcarriers; ++subcarrier) {
-            csv_file << subcarrier;
-            
+
+        // Index: (dmrs * n_subcarriers * n_bs_ants * n_layers_group) + (sc * n_bs_ants * n_layers_group) + (ant * n_layers_group) + layer_offset
+        for (int sc = 0; sc < n_subcarriers; ++sc) {
+            csv_file << sc;
             for (int ant = 0; ant < n_bs_ants; ++ant) {
-                // Index for [dmrs=0, subcarrier, antenna, layer=0]
-                int idx = ant + n_bs_ants * subcarrier;
-                
-                float magnitude = 0.0f;
-                if (idx < hest_data_size) {
-                    magnitude = std::abs(hest_ptr[idx]);
-                }
-                
+                uint32_t idx = (sc * n_bs_ants * n_layers_group) + (ant * n_layers_group) + layer_offset;
+                float magnitude = (idx < h_size) ? std::abs(grp_ptr[idx]) : 0.0f;
                 csv_file << "," << std::fixed << std::setprecision(6) << magnitude;
             }
             csv_file << std::endl;
         }
-        
+
         csv_file.close();
-        
-        std::cout << "Channel estimates data saved: " << filepath << std::endl;
-        std::cout << "  Format: CSV with " << n_subcarriers << " subcarriers x " << (int)n_bs_ants << " antennas" << std::endl;
-        
+        std::cout << "H-est CSV saved: " << filepath << " (" << n_subcarriers << " sc x " << (int)n_bs_ants << " ants)" << std::endl;
+
     } catch (const std::exception& e) {
-        std::cerr << "Error saving channel estimates data: " << e.what() << std::endl;
+        std::cerr << "Error saving channel estimates CSV: " << e.what() << std::endl;
     }
 }
 
 void SaveChannelEstimatesBinary(
-    const std::complex<float>* hest_ptr,
-    uint32_t hest_data_size,
+    const std::complex<float>* grp_ptr,
+    uint32_t h_size,
     uint8_t n_bs_ants,
     uint8_t n_layers,
+    uint16_t layer_offset,
     uint16_t n_subcarriers,
     uint8_t n_dmrs_estimates,
+    uint16_t rnti,
+    uint16_t ue_grp_idx,
     uint16_t sfn,
     uint16_t slot,
     uint64_t timestamp_ns) {
-    
-    if (hest_ptr == nullptr || hest_data_size == 0) {
-        return;
-    }
-    
+
+    if (grp_ptr == nullptr || h_size == 0) return;
+
     try {
         ensureOutputDir();
-        
+
         auto now = std::chrono::system_clock::now();
         auto time_t = std::chrono::system_clock::to_time_t(now);
-        auto ms = std::chrono::duration_cast<std::chrono::microseconds>(now.time_since_epoch()) % 1000000;
-        
+        auto us = std::chrono::duration_cast<std::chrono::microseconds>(now.time_since_epoch()) % 1000000;
+
         std::stringstream filename_ss;
         filename_ss << "hest_" << std::put_time(std::gmtime(&time_t), "%Y%m%d_%H%M%S") << "_"
-                   << std::setfill('0') << std::setw(6) << ms.count() << "_"
+                   << std::setfill('0') << std::setw(6) << us.count() << "_"
                    << std::setfill('0') << std::setw(5) << sfn << "_"
-                   << std::setfill('0') << std::setw(2) << slot << ".bin";
-        
+                   << std::setfill('0') << std::setw(2) << slot << "_"
+                   << "rnti" << rnti << ".bin";
+
         std::string filepath = HEST_OUTPUT_DIR + "/" + filename_ss.str();
-        
+
         std::ofstream bin_file(filepath, std::ios::binary);
         if (!bin_file.is_open()) {
             std::cerr << "Failed to open binary file for writing: " << filepath << std::endl;
@@ -487,52 +426,50 @@ void SaveChannelEstimatesBinary(
         
         // Write header structure (for easy parsing later)
         struct BinaryHeader {
-            uint32_t magic;              // Magic number: 0x48455354 ("HEST")
-            uint32_t version;            // Format version: 1
-            uint64_t timestamp_ns;       // Timestamp in nanoseconds
-            uint16_t sfn;                // System Frame Number
-            uint16_t slot;               // Slot number
-            uint8_t n_bs_ants;          // Number of base station antennas
-            uint8_t n_layers;           // Number of layers
-            uint16_t n_subcarriers;     // Number of subcarriers
-            uint8_t n_dmrs_estimates;   // Number of DMRS estimates
-            uint8_t reserved1;          // Padding
-            uint16_t reserved2;         // Padding
-            uint32_t hest_data_size;    // Number of complex samples
-            uint32_t data_offset;       // Offset to data (bytes from file start)
+            uint32_t magic;
+            uint32_t version;
+            uint64_t timestamp_ns;
+            uint16_t sfn;
+            uint16_t slot;
+            uint16_t rnti;
+            uint16_t ue_grp_idx;
+            uint8_t n_bs_ants;
+            uint8_t n_layers;
+            uint16_t layer_offset;
+            uint16_t n_subcarriers;
+            uint8_t n_dmrs_estimates;
+            uint8_t reserved;
+            uint32_t h_size;
+            uint32_t data_offset;
         } __attribute__((packed));
-        
-        BinaryHeader header;
-        header.magic = 0x48455354;  // "HEST"
-        header.version = 1;
-        header.timestamp_ns = timestamp_ns;
-        header.sfn = sfn;
-        header.slot = slot;
-        header.n_bs_ants = n_bs_ants;
-        header.n_layers = n_layers;
-        header.n_subcarriers = n_subcarriers;
-        header.n_dmrs_estimates = n_dmrs_estimates;
-        header.reserved1 = 0;
-        header.reserved2 = 0;
-        header.hest_data_size = hest_data_size;
-        header.data_offset = sizeof(BinaryHeader);
-        
-        // Write header
-        bin_file.write(reinterpret_cast<const char*>(&header), sizeof(header));
-        
-        // Write raw H-estimates data (complex<float> = 2 floats per sample = 8 bytes)
-        bin_file.write(reinterpret_cast<const char*>(hest_ptr), 
-                      hest_data_size * sizeof(std::complex<float>));
-        
+
+        BinaryHeader hdr{};
+        hdr.magic = 0x48455354;    // "HEST"
+        hdr.version = 2;
+        hdr.timestamp_ns = timestamp_ns;
+        hdr.sfn = sfn;
+        hdr.slot = slot;
+        hdr.rnti = rnti;
+        hdr.ue_grp_idx = ue_grp_idx;
+        hdr.n_bs_ants = n_bs_ants;
+        hdr.n_layers = n_layers;
+        hdr.layer_offset = layer_offset;
+        hdr.n_subcarriers = n_subcarriers;
+        hdr.n_dmrs_estimates = n_dmrs_estimates;
+        hdr.h_size = h_size;
+        hdr.data_offset = sizeof(BinaryHeader);
+
+        bin_file.write(reinterpret_cast<const char*>(&hdr), sizeof(hdr));
+        bin_file.write(reinterpret_cast<const char*>(grp_ptr),
+                      h_size * sizeof(std::complex<float>));
         bin_file.close();
-        
+
         if (ENABLE_VERBOSE_DEBUG) {
-            std::cout << "H-estimates binary data saved: " << filepath << std::endl;
-            std::cout << "  Format: Binary with " << hest_data_size << " complex<float> samples ("
-                      << (hest_data_size * sizeof(std::complex<float>)) << " bytes data + " 
-                      << sizeof(BinaryHeader) << " bytes header)" << std::endl;
+            std::cout << "H-est binary saved: " << filepath
+                      << " (" << h_size << " samples, "
+                      << (h_size * sizeof(std::complex<float>)) << " bytes)" << std::endl;
         }
-        
+
     } catch (const std::exception& e) {
         std::cerr << "Error saving binary channel estimates: " << e.what() << std::endl;
     }

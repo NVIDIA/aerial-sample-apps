@@ -1,8 +1,8 @@
 {
   "_copyright": "SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. SPDX-License-Identifier: Apache-2.0",
   "title": "E3 Protocol Message Examples",
-  "description": "Example messages for the E3 Application Protocol (E3AP) and dApp client interface.",
-  "version": "1.0.0",
+  "description": "Example messages for the E3 Application Protocol (E3AP) and dApp client interface. Includes PUSCH and SRS indication examples.",
+  "version": "1.1.0",
 
   "e3ap_message_examples": {
 
@@ -31,13 +31,13 @@
         "ranFunctionList": [
           {
             "ranFunctionIdentifier": 2,
-            "telemetryIdentifierList": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25],
+            "telemetryIdentifierList": [1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47,48,49,50,51,52,53,54,55,56,57,58,59,60,61,62,63,64,65,66,67,68,69,70,71,72,73,74,75,76,77,78],
             "controlIdentifierList": [],
             "ranFunctionData": [
               {
                 "stream_id": "iq_samples",
                 "data_type": "array(int16)",
-                "description": "Raw IQ samples (Fronthaul data)",
+                "description": "Raw IQ samples (Fronthaul data, PUSCH path)",
                 "status": "available",
                 "delivery_method": {
                   "transport_type": "shared_memory",
@@ -51,7 +51,7 @@
               {
                 "stream_id": "h_estimates",
                 "data_type": "array(complex64)",
-                "description": "PUSCH H matrix estimates (first UE group only)",
+                "description": "PUSCH H matrix estimates (all UE groups concatenated, PUSCH path)",
                 "status": "available",
                 "delivery_method": {
                   "transport_type": "shared_memory",
@@ -63,36 +63,60 @@
                 }
               },
               {
-                "stream_id": "timestamp",
-                "data_type": "uint64",
-                "description": "L1 software timestamp in nanoseconds",
+                "stream_id": "srs_iq_samples",
+                "data_type": "array(int16)",
+                "description": "Raw SRS IQ samples (cell-level, SRS path)",
                 "status": "available",
-                "delivery_method": { "transport_type": "protocolData", "keyword": "timestamp" }
+                "delivery_method": {
+                  "transport_type": "shared_memory",
+                  "shared_memory_info": {
+                    "memory_key": "/e3_ran_buffers",
+                    "memory_size_bytes": 268435456,
+                    "num_rows": 2
+                  }
+                }
+              },
+              {
+                "stream_id": "srs_hest",
+                "data_type": "array(int16)",
+                "description": "SRS channel estimates per slot (SRS path, decode via srs_hest_offset/srs_hest_size per UE)",
+                "status": "available",
+                "delivery_method": {
+                  "transport_type": "shared_memory",
+                  "shared_memory_info": {
+                    "memory_key": "/e3_ran_buffers",
+                    "memory_size_bytes": 268435456,
+                    "num_rows": 2
+                  }
+                }
+              },
+              {
+                "stream_id": "srs_rb_snr",
+                "data_type": "array(float32)",
+                "description": "SRS per-RB SNR per slot (SRS path, decode via srs_rb_snr_offset/srs_rb_snr_size per UE)",
+                "status": "available",
+                "delivery_method": {
+                  "transport_type": "shared_memory",
+                  "shared_memory_info": {
+                    "memory_key": "/e3_ran_buffers",
+                    "memory_size_bytes": 268435456,
+                    "num_rows": 2
+                  }
+                }
               },
               {
                 "stream_id": "sfn",
                 "data_type": "uint16",
-                "description": "Network frame timing information",
+                "description": "Network frame timing information (shared PUSCH/SRS)",
                 "status": "available",
                 "delivery_method": { "transport_type": "protocolData", "keyword": "sfn" }
-              },
-              {
-                "stream_id": "slot",
-                "data_type": "uint16",
-                "description": "Network slot timing information",
-                "status": "available",
-                "delivery_method": { "transport_type": "protocolData", "keyword": "slot" }
-              },
-              {
-                "stream_id": "mcs_index",
-                "data_type": "uint8",
-                "description": "MCS index (should match value sent in DCI, range 0-31)",
-                "status": "available",
-                "delivery_method": { "transport_type": "protocolData", "keyword": "mcs_index" }
               }
             ]
           }
         ]
+      },
+      "notes": {
+        "ranFunctionData_truncated": "Only SHM streams and one inline example shown. Full list contains descriptors for all advertised telemetry IDs (timestamp, slot, mcs_index, srs_wideband_snr, etc.)."
       }
     },
 
@@ -108,8 +132,8 @@
       }
     },
 
-    "subscriptionRequest": {
-      "description": "dApp subscribes to telemetry streams on a specific RAN function via PUB socket. dAppIdentifier is added per-agent before publishing.",
+    "subscriptionRequest_pusch": {
+      "description": "dApp subscribes to PUSCH telemetry streams on a specific RAN function via PUB socket. dAppIdentifier is added per-agent before publishing.",
       "message": {
         "type": "subscriptionRequest",
         "id": 2,
@@ -122,7 +146,27 @@
       },
       "notes": {
         "periodicity": "100000 microseconds = 100 ms between indications",
-        "subscriptionTime": "0 = indefinite (until explicit subscriptionDelete)"
+        "subscriptionTime": "0 = indefinite (until explicit subscriptionDelete)",
+        "telemetryIds": "1=iq_samples, 4=timestamp, 5=sfn, 6=slot. Only PUSCH indications received."
+      }
+    },
+
+    "subscriptionRequest_srs": {
+      "description": "dApp subscribes to SRS telemetry streams plus shared cell/UE identifiers. Only SRS indications will fire (no PUSCH-only IDs present).",
+      "message": {
+        "type": "subscriptionRequest",
+        "id": 3,
+        "dAppIdentifier": 1,
+        "ranFunctionIdentifier": 2,
+        "telemetryIdentifierList": [4, 5, 6, 9, 33, 44, 45, 46, 47, 48, 49, 50, 51, 55, 58, 76],
+        "controlIdentifierList": [],
+        "periodicity": 0,
+        "subscriptionTime": 0
+      },
+      "notes": {
+        "periodicity": "0 = every SRS slot",
+        "shared_ids": "4-6 (timing), 9 (n_rx_ant_srs), 33 (rnti) are shared streams included for context",
+        "srs_ids": "44-51 (SHM + decode), 55 (wideband_snr), 58 (toa), 76 (n_valid_prg)"
       }
     },
 
@@ -154,8 +198,8 @@
       }
     },
 
-    "indicationMessage": {
-      "description": "Agent delivers telemetry data to subscribed dApp via PUB socket. Fields in protocolData depend on subscribed telemetryIdentifierList.",
+    "indicationMessage_single_ue": {
+      "description": "Single-UE indication with IQ, H-estimates, and per-UE metrics.",
       "message": {
         "type": "indicationMessage",
         "id": 100,
@@ -164,9 +208,11 @@
         "subscriptionId": 1,
         "protocolData": {
           "timestamp": 1642248646678901234,
+          "timestamp_tai": 1642248646715000000,
           "sfn": 512,
           "slot": 5,
-          "cell_id": 1,
+          "cell_id": 51,
+          "n_bs_ants": 4,
           "iq_samples": {
             "shm_name": "/e3_ran_buffers",
             "fh_buffer_index": 0,
@@ -176,21 +222,226 @@
             "shm_name": "/e3_ran_buffers",
             "hest_buffer_index": 1,
             "hest_write_index": 42,
-            "hest_data_size": 3072
+            "hest_row_byte_offset": 156672
           },
+          "ue_metrics": [
+            {
+              "rnti": 2831,
+              "n_layers": 1,
+              "layer_offset": 0,
+              "ue_grp_idx": 0,
+              "h_offset": 0,
+              "h_size": 1152,
+              "n_subcarriers": 96,
+              "n_dmrs_estimates": 3,
+              "dmrs_symb_pos": 1057,
+              "rb_start": 0,
+              "rb_size": 8,
+              "start_symbol_index": 0,
+              "nr_of_symbols": 13,
+              "mcs_index": 15,
+              "mcs_table_index": 0,
+              "qam_mod_order": 6,
+              "target_code_rate": 1200,
+              "tb_size": 1544,
+              "pdu_len": 1544,
+              "tb_crc_fail": 0,
+              "cb_errors": 0,
+              "sinr": 9.57,
+              "noise_var": 1.85,
+              "rsrp": -10.02,
+              "rssi": 16.19,
+              "timing_advance": 0.97,
+              "cfo_hz": 12.5,
+              "harq_process_id": 0,
+              "rv_index": 0,
+              "new_data_indicator": 1,
+              "cb_count": 1
+            }
+          ]
+        }
+      }
+    },
+
+    "indicationMessage_multi_ue": {
+      "description": "Multi-UE (FDM) indication. Two UEs in separate groups with different PRB allocations.",
+      "message": {
+        "type": "indicationMessage",
+        "id": 200,
+        "dAppIdentifier": 1,
+        "ranFunctionIdentifier": 2,
+        "subscriptionId": 1,
+        "protocolData": {
+          "timestamp": 1642248646779012345,
+          "sfn": 564,
+          "slot": 7,
+          "cell_id": 51,
           "n_bs_ants": 4,
-          "n_layers": 2,
-          "n_subcarriers": 768,
-          "n_dmrs_estimates": 2,
-          "rb_start": 0,
-          "rb_size": 64,
-          "start_symbol_index": 2,
-          "nr_of_symbols": 12,
-          "dmrs_symb_pos": 4164,
-          "mcs_index": 15,
-          "mcs_table_index": 0,
-          "qam_mod_order": 6,
-          "tb_crc_fail": 0
+          "n_ue": 2,
+          "h_estimates": {
+            "shm_name": "/e3_ran_buffers",
+            "hest_buffer_index": 0,
+            "hest_write_index": 15,
+            "hest_row_byte_offset": 55872
+          },
+          "ue_metrics": [
+            {
+              "rnti": 2831,
+              "n_layers": 1,
+              "layer_offset": 0,
+              "ue_grp_idx": 0,
+              "h_offset": 0,
+              "h_size": 720,
+              "n_subcarriers": 60,
+              "n_dmrs_estimates": 3,
+              "dmrs_symb_pos": 1057,
+              "rb_start": 0,
+              "rb_size": 5,
+              "start_symbol_index": 0,
+              "nr_of_symbols": 13,
+              "mcs_index": 20,
+              "sinr": 17.2,
+              "rsrp": -8.5,
+              "tb_crc_fail": 0
+            },
+            {
+              "rnti": 47668,
+              "n_layers": 1,
+              "layer_offset": 0,
+              "ue_grp_idx": 1,
+              "h_offset": 720,
+              "h_size": 720,
+              "n_subcarriers": 60,
+              "n_dmrs_estimates": 3,
+              "dmrs_symb_pos": 1057,
+              "rb_start": 5,
+              "rb_size": 5,
+              "start_symbol_index": 0,
+              "nr_of_symbols": 13,
+              "mcs_index": 20,
+              "sinr": 16.9,
+              "rsrp": -9.1,
+              "tb_crc_fail": 0
+            }
+          ]
+        }
+      }
+    },
+
+    "indicationMessage_srs_single_ue": {
+      "description": "Single-UE SRS indication with SRS IQ, SRS H-estimates, SRS RB SNR, and per-UE SRS metrics.",
+      "message": {
+        "type": "indicationMessage",
+        "id": 300,
+        "dAppIdentifier": 1,
+        "ranFunctionIdentifier": 2,
+        "subscriptionId": 1,
+        "protocolData": {
+          "timestamp": 1642248646878012345,
+          "sfn": 520,
+          "slot": 7,
+          "cell_id": 51,
+          "n_rx_ant_srs": 4,
+          "srs_cell_start_sym": 13,
+          "srs_cell_n_srs_sym": 1,
+          "n_srs_ue": 1,
+          "srs_iq_samples": {
+            "shm_name": "/e3_ran_buffers",
+            "srs_iq_buffer_index": 0,
+            "srs_iq_write_index": 3,
+            "srs_iq_row_byte_offset": 943488
+          },
+          "srs_hest": {
+            "shm_name": "/e3_ran_buffers",
+            "srs_hest_buffer_index": 0,
+            "srs_hest_write_index": 3
+          },
+          "srs_rb_snr": {
+            "shm_name": "/e3_ran_buffers",
+            "srs_rb_snr_buffer_index": 0,
+            "srs_rb_snr_write_index": 3
+          },
+          "ue_metrics": [
+            {
+              "rnti": 2831,
+              "srs_wideband_snr": 19.2,
+              "srs_toa": 0.52,
+              "srs_ant_ports": 1,
+              "srs_n_valid_prg": 273,
+              "srs_prg_size": 1,
+              "srs_hest_n_prb_grps": 273,
+              "srs_hest_offset": 0,
+              "srs_hest_size": 4368,
+              "srs_rb_snr_offset": 0,
+              "srs_rb_snr_size": 1092
+            }
+          ],
+          "_note": "Only key SRS per-UE fields shown. Full set includes srs_signal_energy, srs_noise_energy, srs_sc_corr, srs_comb_size, srs_freq_position, etc. See e3_message_schemas.json for all fields."
+        }
+      }
+    },
+
+    "indicationMessage_srs_multi_ue": {
+      "description": "Multi-UE SRS indication. Two UEs each with their own SRS H-estimate and RB SNR blobs.",
+      "message": {
+        "type": "indicationMessage",
+        "id": 400,
+        "dAppIdentifier": 1,
+        "ranFunctionIdentifier": 2,
+        "subscriptionId": 1,
+        "protocolData": {
+          "timestamp": 1642248646978012345,
+          "sfn": 528,
+          "slot": 7,
+          "cell_id": 51,
+          "n_rx_ant_srs": 4,
+          "srs_cell_start_sym": 13,
+          "srs_cell_n_srs_sym": 1,
+          "n_srs_ue": 2,
+          "srs_iq_samples": {
+            "shm_name": "/e3_ran_buffers",
+            "srs_iq_buffer_index": 1,
+            "srs_iq_write_index": 5,
+            "srs_iq_row_byte_offset": 1572480
+          },
+          "srs_hest": {
+            "shm_name": "/e3_ran_buffers",
+            "srs_hest_buffer_index": 1,
+            "srs_hest_write_index": 5
+          },
+          "srs_rb_snr": {
+            "shm_name": "/e3_ran_buffers",
+            "srs_rb_snr_buffer_index": 1,
+            "srs_rb_snr_write_index": 5
+          },
+          "ue_metrics": [
+            {
+              "rnti": 2831,
+              "srs_wideband_snr": 19.2,
+              "srs_toa": 0.52,
+              "srs_ant_ports": 2,
+              "srs_n_valid_prg": 273,
+              "srs_prg_size": 1,
+              "srs_hest_n_prb_grps": 273,
+              "srs_hest_offset": 0,
+              "srs_hest_size": 8736,
+              "srs_rb_snr_offset": 0,
+              "srs_rb_snr_size": 1092
+            },
+            {
+              "rnti": 47668,
+              "srs_wideband_snr": 21.7,
+              "srs_toa": 0.48,
+              "srs_ant_ports": 1,
+              "srs_n_valid_prg": 273,
+              "srs_prg_size": 1,
+              "srs_hest_n_prb_grps": 273,
+              "srs_hest_offset": 8736,
+              "srs_hest_size": 4368,
+              "srs_rb_snr_offset": 1092,
+              "srs_rb_snr_size": 1092
+            }
+          ]
         }
       }
     },
@@ -289,12 +540,12 @@
   "client_command_examples": {
     "_description": "Commands sent by external clients (e.g., e3_client.py or e3_e2e_test.py) to the dApp's ZMQ REP interface",
 
-    "subscribe": {
-      "description": "Subscribe to an E3 Agent's telemetry streams through the dApp",
+    "subscribe_pusch": {
+      "description": "Subscribe to PUSCH telemetry streams (IQ + sfn/slot/mcs) through the dApp",
       "request": {
         "cmd": "subscribe",
         "agent": "NVIDIA_L1",
-        "telemetryIdentifierList": [1, 4, 5, 6],
+        "telemetryIdentifierList": [1, 4, 5, 6, 23],
         "ranFunctionIdentifier": 2,
         "periodicity": 100000,
         "subscriptionTime": 5,

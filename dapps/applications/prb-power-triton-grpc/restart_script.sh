@@ -17,31 +17,70 @@
 # limitations under the License.
 #
 
+usage() {
+    cat <<'EOF'
+Usage: ./restart_script.sh [-b|--build] [-c|--config PATH]
+
+  -b, --build         Rebuild the image (auto-enabled if the image does not exist yet).
+                      Needed after C++ or source changes.
+  -c, --config PATH   Config file; a bare name resolves under config/.
+                      Default: config/e3_config.json
+  -h, --help          Show this help.
+EOF
+}
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$SCRIPT_DIR" || exit 1
+
+BUILD=0
+CONFIG_FILE="config/e3_config.json"
+while [ $# -gt 0 ]; do
+    case "$1" in
+        -b|--build)  BUILD=1; shift;;
+        -c|--config) case "${2-}" in ""|-*) echo "Missing value for $1" >&2; usage; exit 1;; esac; CONFIG_FILE="$2"; shift 2;;
+        -h|--help)   usage; exit 0;;
+        *) echo "Unknown option: $1" >&2; usage; exit 1;;
+    esac
+done
+case "$CONFIG_FILE" in */*) ;; *) CONFIG_FILE="config/$CONFIG_FILE";; esac
+if [ ! -f "$CONFIG_FILE" ]; then
+    echo "ERROR: config not found: $CONFIG_FILE" >&2
+    exit 1
+fi
+case "$(realpath "$CONFIG_FILE")" in "$(realpath config)"/*) ;; *)
+    echo "ERROR: --config must live under config/: $CONFIG_FILE" >&2
+    exit 1;;
+esac
+
 echo "=== Restart Script for PRB Power dApp (Triton gRPC) ==="
 
-# Read IPC mode from config
-CONFIG_FILE="config/e3_config.json"
-if [ -f "$CONFIG_FILE" ]; then
-    IPC_MODE=$(jq -r '.deployment.ipc_mode // "container:nv-cubb"' "$CONFIG_FILE")
-    echo "IPC mode: $IPC_MODE"
-    export IPC_MODE
-else
-    echo "WARNING: Config file not found, using default IPC mode"
-    export IPC_MODE="container:nv-cubb"
+CONTAINER_PREFIX="/opt/src/applications/prb-power-triton-grpc"
+export E3_CONFIG="$CONTAINER_PREFIX/$CONFIG_FILE"
+
+IPC_MODE=$(jq -r '.deployment.ipc_mode // "container:nv-cubb"' "$CONFIG_FILE")
+echo "IPC mode: $IPC_MODE"
+export IPC_MODE
+
+IMAGE="dapp-prb-power-triton-grpc:latest"
+if [ "$BUILD" -eq 0 ] && ! docker image inspect "$IMAGE" >/dev/null 2>&1; then
+    echo "Image $IMAGE not found; building it this time."
+    BUILD=1
 fi
+echo "Config: $CONFIG_FILE (build=$BUILD)"
 
-# Stop Triton Server
+# Stop and remove existing container
 echo "Removing existing container..."
-docker compose down
-docker rm --force dapp-prb-power-triton-grpc
+docker compose down --remove-orphans 2>/dev/null || true
 
-# Delete existing image
-echo "Deleting existing image..."
-docker image rm dapp-prb-power-triton-grpc:latest
+if [ "$BUILD" -eq 1 ]; then
+    # Delete existing image
+    echo "Deleting existing image..."
+    docker image rm "$IMAGE" 2>/dev/null || true
 
-# Build new image
-echo "Building new image..."
-docker compose build
+    # Build new image
+    echo "Building new image..."
+    docker compose build
+fi
 
 # Start container
 echo "Starting PRB Power Triton gRPC container..."

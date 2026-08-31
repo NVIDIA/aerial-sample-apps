@@ -90,12 +90,8 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""\
 telemetry IDs (-t):
-  1=iq_samples  2=pdu_data  3=h_estimates  4=timestamp  5=sfn  6=slot
-  7=cell_id  8=n_rx_ant  9=n_rx_ant_srs  10=n_cells  11=n_bs_ants
-  12=n_layers  13=n_subcarriers  14=n_dmrs_estimates  15=dmrs_symb_pos
-  16=tb_crc_fail  17=cb_errors  18=rsrp  19=cqi  20=cb_count  21=rssi
-  22=qam_mod_order  23=mcs_index  24=mcs_table_index  25=rb_start
-  26=rb_size  27=start_symbol_index  28=nr_of_symbols
+  See docs/application_development_guide.md (Available Data Streams) for the
+  full list of telemetry IDs.
 
 typical workflow:
   %(prog)s list-agents                                             # 1. discover agents
@@ -142,6 +138,7 @@ more examples:
     socket = context.socket(zmq.REQ)
     socket.connect(f"tcp://{args.host}:{args.port}")
     socket.setsockopt(zmq.RCVTIMEO, args.timeout)
+    socket.setsockopt(zmq.LINGER, 0)
 
     print(f"Sending: {json.dumps(request)}")
     socket.send_string(json.dumps(request))

@@ -38,7 +38,6 @@ CORS(app)
 # Global state
 current_data = None
 last_update_time = 0
-prb_history = deque(maxlen=50)  # Store last 50 PRB power snapshots
 timing_history = deque(maxlen=50)  # Store last 50 timing measurements
 data_lock = threading.Lock()
 
@@ -226,6 +225,16 @@ HTML_TEMPLATE = '''
     <script>
         var STALE_THRESHOLD = 1.0;
 
+        // Sticky absolute-dB y-axis: latch the widest extent ever seen (expand-only, never shrinks).
+        var yLo = null, yHi = null;
+        function stickyRange(dmin, dmax) {
+            var tLo = Math.floor((dmin - 3) / 5) * 5;
+            var tHi = Math.ceil((dmax + 3) / 5) * 5;
+            yLo = (yLo === null) ? tLo : Math.min(yLo, tLo);
+            yHi = (yHi === null) ? tHi : Math.max(yHi, tHi);
+            return [yLo, yHi];
+        }
+
         function setStatus(cls, text) {
             document.getElementById('status-dot').className = 'status-indicator ' + cls;
             document.getElementById('status-text').textContent = text;
@@ -258,8 +267,11 @@ HTML_TEMPLATE = '''
         }
         
         function updatePRBBars(prb_power) {
-            // Convert to dB scale for better visualization
-            let prb_power_db = prb_power.map(p => p > 0 ? 10 * Math.log10(p) : -100);
+            // Convert to dB scale for better visualization (NaN drops empty PRBs from the range)
+            let prb_power_db = prb_power.map(p => p > 0 ? 10 * Math.log10(p) : NaN);
+            let finite = prb_power_db.filter(Number.isFinite);
+            let yrange = finite.length ? stickyRange(Math.min(...finite), Math.max(...finite))
+                                       : [yLo !== null ? yLo : -60, yHi !== null ? yHi : 0];
             
             let trace = {
                 x: Array.from({length: prb_power.length}, (_, i) => i),
@@ -281,14 +293,15 @@ HTML_TEMPLATE = '''
                 },
                 yaxis: { 
                     title: { text: 'Power (dB)', font: { size: 16 } },
-                    range: [-40, 30],
+                    range: yrange,
                     tickfont: { size: 14 }
                 },
+                uirevision: 1,
                 height: 350,
                 margin: { t: 10, b: 50, l: 60, r: 20 }
             };
             
-            Plotly.newPlot('prb-bars', [trace], layout, {responsive: true});
+            Plotly.react('prb-bars', [trace], layout, {responsive: true});
         }
         
         function updateClientTimingPlot(timing_history) {
@@ -304,6 +317,7 @@ HTML_TEMPLATE = '''
                         range: [0, 3000],
                         tickfont: { size: 14 }
                     },
+                    uirevision: 1,
                     height: 350,
                     margin: { t: 10, b: 50, l: 60, r: 20 },
                     annotations: [{
@@ -316,7 +330,7 @@ HTML_TEMPLATE = '''
                         font: { size: 14, color: '#999' }
                     }]
                 };
-                Plotly.newPlot('client-timing-plot', [], layout, {responsive: true});
+                Plotly.react('client-timing-plot', [], layout, {responsive: true});
                 return;
             }
             
@@ -344,11 +358,12 @@ HTML_TEMPLATE = '''
                     range: [0, 3000],
                     tickfont: { size: 14 }
                 },
+                uirevision: 1,
                 height: 350,
                 margin: { t: 10, b: 50, l: 60, r: 20 }
             };
             
-            Plotly.newPlot('client-timing-plot', [trace], layout, {responsive: true});
+            Plotly.react('client-timing-plot', [trace], layout, {responsive: true});
         }
         
         function updateStats(data) {
@@ -378,8 +393,8 @@ HTML_TEMPLATE = '''
             document.getElementById('stat-mean-power').innerHTML = 
                 mean_power_db.toFixed(1) + '<span class="unit">dB</span>';
             
-            // Active PRBs (power > 0 dB, i.e. linear > 1.0)
-            let active_prbs = data.prb_power.filter(p => p > 1.0).length;
+            // Active PRBs: within 10 dB of the peak (stack-agnostic; absolute scale varies by L1)
+            let active_prbs = data.prb_power.filter(p => p > max_power_linear * 0.1).length;
             document.getElementById('stat-active-prbs').textContent = active_prbs;
         }
         
@@ -473,7 +488,6 @@ def zmq_receiver(zmq_port):
                     }
                     
                     # Update history
-                    prb_history.append(prb_power.tolist())
                     if timing:
                         timing_history.append(timing)
                         
@@ -509,7 +523,6 @@ def get_data():
     with data_lock:
         if current_data:
             response = current_data.copy()
-            response['prb_history'] = list(prb_history)
             response['timing_history'] = list(timing_history)
             response['last_update'] = last_update_time
             response['server_time'] = time.time()

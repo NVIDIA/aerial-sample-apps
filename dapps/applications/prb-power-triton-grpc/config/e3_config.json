@@ -9,35 +9,52 @@
   },
   "application": {
     "name": "PRB Power Triton gRPC",
-    "version": "1.0.0",
+    "version": "1.1.0",
     "vendor": "NVIDIA",
     "results_pub_port": 5559,
-    "enable_results_publishing": true
+    "enable_results_publishing": true,
+    "visualizer": {
+      "enabled": true,
+      "web_port": 5001
+    }
   },
   "e3_manager": {
     "dapp_client_endpoint": "tcp://*:5558",
     "e3_agents": [
       {
         "name": "NVIDIA_L1",
+        "enabled": true,
         "host": "127.0.0.1",
         "agent_rep_port": 5555,
         "agent_pub_port": 5556,
         "agent_sub_port": 5557,
-        "enabled": true,
+        "auto_setup": true,
+        "subscription_options": {
+          "auto_subscribe": false,
+          "model": "prb_power_numpy",
+          "telemetry_ids": [1, 4, 5, 6],
+          "control_ids": [],
+          "ran_function_id": 2,
+          "periodicity_us": 100000,
+          "subscription_time_s": 0
+        },
         "comment": "NVIDIA L1 E3 Agent"
       },
       {
         "name": "OAI_L2",
+        "enabled": false,
         "host": "127.0.0.1",
         "agent_rep_port": 9990,
         "agent_pub_port": 9991,
         "agent_sub_port": 9999,
-        "enabled": false,
+        "auto_setup": true,
+        "subscription_options": {
+          "auto_subscribe": false
+        },
         "comment": "OAI L2 E3 Agent"
       }
     ],
     "default_model": "prb_power_numpy",
-    "auto_setup": true,
     "subscription_response_timeout_s": 10,
     "debug_enabled": false
   },
@@ -54,6 +71,7 @@
   "logging": {
     "directory": "/logs",
     "triton_log": "triton.log",
-    "e3_manager_log": "e3_manager.log"
+    "e3_manager_log": "e3_manager.log",
+    "visualizer_log": "visualizer.log"
   }
 } 

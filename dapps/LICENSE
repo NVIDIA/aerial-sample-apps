@@ -1,7 +1,7 @@
-The contents of this repository are licensed under a mix of Apache 2.0 and 
-MIT licenses. When building the containers, you will download NVIDIA and 
-third-party software and materials, which are governed by their respective 
-licenses as described in ATTRIBUTION.rst.
+The contents of this repository are licensed under the Apache 2.0 license.
+When building the containers, you will download NVIDIA and third-party
+software and materials, which are governed by their respective licenses
+as described in ATTRIBUTION.rst.
 
 ###########################################################################
 

@@ -23,7 +23,7 @@ The inference engine embeds a Python interpreter directly in the C++ application
 ├── Dockerfile                     # Container definition
 ├── compose.yml                    # Docker Compose configuration
 ├── start_services.sh              # Service startup script
-└── restart_script.sh              # Container rebuild and restart
+└── restart_script.sh              # Container build and restart
 ```
 
 ## Quick Start
@@ -41,16 +41,22 @@ Edit `config/e3_config.json`:
 ./restart_script.sh
 ```
 
-This builds the container and starts:
+This starts:
 - E3 Manager with the PRB Power application handler
 - Embedded Python inference engine
 - dApp client interface on port 5558
+- Web visualizer at `http://localhost:5001` (when `application.visualizer.enabled` is `true`)
 
-If `auto_setup` is enabled in the config (default: `true`), the E3 Manager will automatically connect to all enabled agents and open the shared memory region on startup.
+This script reuses the existing image by default (built automatically the first time). Options:
+
+- `-b, --build` rebuild the image; needed after C++/source changes.
+- `-c, --config PATH` select the E3 config (a bare name resolves under `config/`).
+
+If `auto_setup` is enabled for an agent (default: `true`), the E3 Manager automatically connects to it and opens the shared memory region on startup. If that agent also sets `subscription_options.auto_subscribe`, the manager subscribes on its own once connected (and re-subscribes after a reconnect), so the manual step below is not required.
 
 ### 3. Subscribe to Data
 
-From another terminal:
+If the agent does not use `auto_subscribe`, drive the subscription from another terminal:
 
 ```bash
 docker exec -it dapp-prb-power-python \
@@ -77,10 +83,14 @@ The `config/e3_config.json` file controls all runtime settings:
   },
   "application": {
     "name": "PRB Power Python",
-    "version": "1.0.0",
+    "version": "1.1.0",
     "vendor": "NVIDIA",
     "results_pub_port": 5559,
-    "enable_results_publishing": true
+    "enable_results_publishing": true,
+    "visualizer": {
+      "enabled": true,
+      "web_port": 5001
+    }
   },
   "e3_manager": {
     "dapp_client_endpoint": "tcp://*:5558",
@@ -91,10 +101,18 @@ The `config/e3_config.json` file controls all runtime settings:
         "agent_rep_port": 5555,
         "agent_pub_port": 5556,
         "agent_sub_port": 5557,
-        "enabled": true
+        "enabled": true,
+        "auto_setup": true,
+        "subscription_options": {
+          "auto_subscribe": true,
+          "telemetry_ids": [1, 4, 5, 6],
+          "control_ids": [],
+          "ran_function_id": 2,
+          "periodicity_us": 100000,
+          "subscription_time_s": 0
+        }
       }
     ],
-    "auto_setup": true,
     "subscription_response_timeout_s": 10,
     "debug_enabled": false
   },
@@ -116,9 +134,13 @@ The `config/e3_config.json` file controls all runtime settings:
 | `e3_manager` | `e3_agents[].agent_rep_port` | Agent REP port: dApp sends setup request, Agent replies. |
 | `e3_manager` | `e3_agents[].agent_pub_port` | Agent PUB port: Agent publishes indications, dApp subscribes. |
 | `e3_manager` | `e3_agents[].agent_sub_port` | Agent SUB port: dApp publishes subscribe/unsubscribe/control/release, Agent subscribes. |
-| `e3_manager` | `auto_setup` | Automatically run E3 setup on startup. |
+| `e3_manager` | `e3_agents[].auto_setup` | Per agent. Automatically run E3 setup on startup and re-run it after a reconnect (default: `true`). |
+| `e3_manager` | `e3_agents[].subscription_options.auto_subscribe` | Per agent. Subscribe automatically once connected, using the options below; re-subscribe after a reconnect (shipped config: `true` for `NVIDIA_L1`; `false` if the key is omitted). |
+| `e3_manager` | `e3_agents[].subscription_options.*` | Subscription parameters used when `auto_subscribe` is set: `model` (optional, defaults to `python_engine.model_name`), `telemetry_ids`, `control_ids`, `ran_function_id`, `periodicity_us`, `subscription_time_s`. |
 | `e3_manager` | `debug_enabled` | Print all indication metadata and raw IQ/H-estimate debug data. Can also be enabled via `--debug` CLI flag. |
 | `application` | `results_pub_port` | ZMQ port for publishing inference results (used by visualizer). |
+| `application` | `visualizer.enabled` | Auto-launch the web visualizer with the dApp on startup (shipped config: `true`; `false` if the key is omitted). |
+| `application` | `visualizer.web_port` | Visualizer web server port (default: `5001`). |
 | `python_engine` | `module_path` | Filesystem path to the directory containing Python model files. |
 | `python_engine` | `model_name` | Python module to load (filename without `.py`). |
 
@@ -152,7 +174,8 @@ To switch between models, update `python_engine.model_name` in `config/e3_config
 }
 ```
 
-Rebuild and restart the container for the change to take effect.
+Restart the container (`./restart_script.sh`) for the change to take effect; add
+`-b` if you also changed the model files under `models/` (baked at build time).
 
 ### Writing Custom Models
 
@@ -200,6 +223,10 @@ Supported type strings: `FP16`, `FP32`, `FP64`, `INT8`, `INT16`, `INT32`, `INT64
 ## Visualizer
 
 Real-time web-based visualization of PRB power distribution and inference timing. Connects to the E3 Manager's ZMQ results publisher to display live PRB power data.
+
+When `application.visualizer.enabled` is `true`, the visualizer starts automatically with `restart_script.sh` and is available at `http://localhost:5001`. No extra step is required.
+
+To run it manually instead (e.g. with `visualizer.enabled` set to `false`):
 
 ```bash
 docker exec -it dapp-prb-power-python bash /opt/src/applications/prb-power-python/visualizer/start_prb_visualizer.sh

@@ -424,6 +424,7 @@ InferenceEngine::InferenceResult TritonEngine::infer(
         result.error_message = std::string("Inference failed: ") +
                                TRITONSERVER_ErrorMessage(err);
         TRITONSERVER_ErrorDelete(err);
+        TRITONSERVER_InferenceRequestDelete(request);
         return result;
     }
 

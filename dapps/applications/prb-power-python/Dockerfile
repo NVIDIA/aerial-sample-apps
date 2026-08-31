@@ -21,6 +21,7 @@ FROM nvcr.io/nvidia/pytorch:26.01-py3
 RUN apt-get update && apt-get install -y \
     libzmq3-dev \
     pkg-config \
+    nlohmann-json3-dev \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Python dependencies

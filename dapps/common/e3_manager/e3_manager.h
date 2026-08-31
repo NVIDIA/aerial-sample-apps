@@ -31,13 +31,20 @@
 #include <unordered_map>
 #include <functional>
 #include <complex>
+#include <vector>
 #include "inference_engine.h"
 #include <nlohmann/json.hpp>
 #include <zmq.hpp>
 
-// Shared memory header (must match e3_agent.hpp layout)
+// Shared memory header (200 bytes — must match producer struct in
+// aerial_sdk/cuPHY-CP/data_lake/e3_agent.hpp). Field order matches the
+// producer exactly (IQ → Hest → RbSNR for metadata). Note that the on-disk
+// data layout is a different order: header, 2×FH, 2×PUSCH, 2×Hest,
+// 2×SRS-IQ, 2×SRS-RbSNR, 2×SRS-Hest. Use the SRS_* offsets in the consumer
+// to compute SRS region bases.
 struct SharedMemoryHeader {
-    uint32_t version;
+    uint32_t version;                    // 0x010100 = v1.1.0
+    // PUSCH path
     uint32_t fh_buffer_size;
     uint32_t pusch_buffer_size;
     uint32_t hest_buffer_size;
@@ -46,8 +53,21 @@ struct SharedMemoryHeader {
     uint32_t num_pusch_rows;
     uint32_t num_hest_rows;
     uint32_t max_hest_samples_per_row;
-    uint32_t reserved[7];
+    // SRS path
+    uint32_t srs_iq_buffer_size;
+    uint32_t num_srs_iq_samples;
+    uint32_t num_srs_iq_rows;
+    uint32_t srs_hest_buffer_size;
+    uint32_t max_srs_hest_bytes_per_row;
+    uint32_t num_srs_hest_rows;
+    uint32_t srs_rb_snr_buffer_size;
+    uint32_t max_srs_rb_snr_bytes_per_row;
+    uint32_t num_srs_rb_snr_rows;
+    uint32_t reserved[32];
 };
+
+static_assert(sizeof(SharedMemoryHeader) == 50 * sizeof(uint32_t),
+              "SharedMemoryHeader size changed: bump version and update SHM contract.");
 
 namespace e3 {
 
@@ -76,19 +96,33 @@ void ProcessHEstimatesDebug(const nlohmann::json& payload, void* ran_shm_ptr);
 void PrintMetadataDebug(const nlohmann::json& payload);
 
 void SaveChannelEstimatesCSV(
-    const std::complex<float>* hest_ptr, uint32_t hest_data_size,
-    uint8_t n_bs_ants, uint8_t n_layers, uint16_t n_subcarriers,
-    uint8_t n_dmrs_estimates, uint16_t sfn, uint16_t slot, uint64_t timestamp_ns);
+    const std::complex<float>* grp_ptr, uint32_t h_size,
+    uint8_t n_bs_ants, uint8_t n_layers, uint16_t layer_offset,
+    uint16_t n_subcarriers, uint8_t n_dmrs_estimates,
+    uint16_t rnti, uint16_t sfn, uint16_t slot, uint64_t timestamp_ns);
 
 void SaveChannelEstimatesBinary(
-    const std::complex<float>* hest_ptr, uint32_t hest_data_size,
-    uint8_t n_bs_ants, uint8_t n_layers, uint16_t n_subcarriers,
-    uint8_t n_dmrs_estimates, uint16_t sfn, uint16_t slot, uint64_t timestamp_ns);
+    const std::complex<float>* grp_ptr, uint32_t h_size,
+    uint8_t n_bs_ants, uint8_t n_layers, uint16_t layer_offset,
+    uint16_t n_subcarriers, uint8_t n_dmrs_estimates,
+    uint16_t rnti, uint16_t ue_grp_idx,
+    uint16_t sfn, uint16_t slot, uint64_t timestamp_ns);
 
 } // namespace e3
 
 class E3Manager {
 public:
+    // Per-agent auto-subscription options (applied on connect when enabled)
+    struct AutoSubscription {
+        bool enabled = false;
+        std::string model;                  // Empty: use manager default model
+        std::vector<uint32_t> telemetry_ids;
+        std::vector<uint32_t> control_ids;
+        uint32_t ran_function_id = 2;
+        uint32_t periodicity_us = 100000;
+        uint32_t subscription_time_s = 0;   // 0 = indefinite
+    };
+
     // Structure to hold E3 Agent configuration
     struct E3AgentConfig {
         std::string name;         // Agent name (e.g., "NVIDIA_L1", "OAI_L2")
@@ -97,6 +131,8 @@ public:
         uint16_t agent_pub_port;  // Agent PUB port: Agent publishes indications, dApp subscribes
         uint16_t agent_sub_port;  // Agent SUB port: dApp publishes subscribe/unsubscribe/control/release, Agent subscribes
         bool enabled = true;      // Whether this agent should be connected
+        bool auto_setup = true;   // Auto-send E3 Setup on startup / reconnect
+        AutoSubscription auto_subscription;  // Auto-subscribe after setup
     };
 
     // Multi-agent constructor (supports 1 to N agents)
@@ -110,8 +146,7 @@ public:
               uint32_t results_pub_port = 5559,
               uint32_t subscription_response_timeout_s = 10,
               const std::string& shm_key = "/e3_ran_buffers",
-              bool shm_required = true,
-              bool auto_setup = true);
+              bool shm_required = true);
               
     ~E3Manager();
     
@@ -151,6 +186,8 @@ private:
         E3AgentConfig config;
         std::string agent_id;                          // ID received from agent during setup
         e3::E3State state{e3::E3State::DISCONNECTED};
+        std::atomic<bool> auto_setup_active{true};      // Runtime gate (disabled on release)
+        std::atomic<bool> auto_subscribe_active{false}; // Runtime gate (disabled on reject/timeout/unsubscribe/release)
         std::optional<DAppSubscription> subscription;
         std::thread sub_thread;                        // Subscription thread for this agent
         std::shared_ptr<zmq::context_t> zmq_context;   // ZMQ context for this agent's subscription
@@ -167,6 +204,9 @@ private:
         // are needed in the future, replace with std::unordered_map<uint32_t, time_point>.
         uint32_t pending_request_id = 0;
         std::chrono::steady_clock::time_point pending_request_time;
+
+        // Auto-subscribe retry deadline base; epoch = not attempted yet.
+        std::chrono::steady_clock::time_point auto_subscribe_first_attempt{};
     };
 
     // Main loops
@@ -178,6 +218,7 @@ private:
 
     // E3 Protocol handlers
     bool HandleE3Subscription(const std::vector<uint32_t>& telemetry_ids,
+                             const std::vector<uint32_t>& control_ids,
                              uint32_t ran_function_id,
                              uint32_t periodicity_us,
                              uint32_t subscription_time_s,
@@ -201,7 +242,7 @@ private:
     uint32_t GenerateMessageId();
     
     nlohmann::json CreateE3SetupRequestMessage();
-    nlohmann::json CreateE3SubscriptionRequestMessage(const std::vector<uint32_t>& telemetry_ids, uint32_t ran_function_id, uint32_t periodicity_us, uint32_t subscription_time_s);
+    nlohmann::json CreateE3SubscriptionRequestMessage(const std::vector<uint32_t>& telemetry_ids, const std::vector<uint32_t>& control_ids, uint32_t ran_function_id, uint32_t periodicity_us, uint32_t subscription_time_s);
     nlohmann::json CreateE3SubscriptionDeleteMessage(uint32_t subscription_id);
     nlohmann::json CreateE3ControlRequestMessage(uint16_t sfn, uint16_t slot, uint32_t dapp_id);
     bool ParseE3SetupResponseMessage(const std::string& response_str, uint32_t& received_dapp_id);
@@ -229,6 +270,7 @@ private:
     
     // State management
     std::atomic<bool> running_;
+    std::atomic<bool> stopped_{false};
     
     // Inference engine (non-owning, app manages lifecycle)
     e3::InferenceEngine* engine_;
@@ -247,15 +289,16 @@ private:
     size_t ran_shm_size_ = 0;
     std::string shm_key_ = "/e3_ran_buffers";      // Shared memory key
     bool shm_required_ = true;                     // Whether shared memory is required
+    bool engine_shm_registered_ = false;           // Engine SHM registration succeeded (retried until true)
     
     // Connection monitoring configuration
     static constexpr uint32_t TCP_KEEPALIVE_IDLE_S = 5;  // Start probes after N seconds idle
     static constexpr uint32_t TCP_KEEPALIVE_INTERVAL_S = 2;  // Interval between probes
     static constexpr uint32_t TCP_KEEPALIVE_COUNT = 3;  // Number of probes before declaring dead
     static constexpr uint32_t CONNECTION_CHECK_INTERVAL_MS = 1000;  // How often to check disconnected agents
+    static constexpr uint32_t AUTO_SUBSCRIBE_READY_TIMEOUT_S = 60;  // Give up auto-subscribe if inference backend/model not ready within this
     uint32_t subscription_response_timeout_s_ = 10;  // Timeout for pending subscription requests
     uint32_t results_pub_port_ = 5559;             // Results publisher port
-    bool auto_setup_ = true;                       // Auto-send E3 Setup on startup
 };
 
 #endif // E3_MANAGER_H

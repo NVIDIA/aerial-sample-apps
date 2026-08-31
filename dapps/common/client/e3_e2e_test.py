@@ -35,6 +35,7 @@ def test_e3_dapp_lifecycle(args):
     socket = context.socket(zmq.REQ)
     socket.connect(f"tcp://{args.host}:{args.port}")
     socket.setsockopt(zmq.RCVTIMEO, 5000)
+    socket.setsockopt(zmq.LINGER, 0)
 
     print(f"--- Testing Full dApp Lifecycle for model: {args.model or '(server default)'} ---")
     if args.agent:

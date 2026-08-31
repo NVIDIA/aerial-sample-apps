@@ -42,22 +42,29 @@ echo "Loading configuration from $CONFIG_FILE..."
 LOG_DIR=$(jq -r '.logging.directory' "$CONFIG_FILE")
 E3_MANAGER_LOG=$(jq -r '.logging.e3_manager_log' "$CONFIG_FILE")
 E3_DEBUG_ENABLED=$(jq -r '.e3_manager.debug_enabled' "$CONFIG_FILE")
+VIS_LOG=$(jq -r '.logging.visualizer_log // "visualizer.log"' "$CONFIG_FILE")
+VIS_ENABLED=$(jq -r '.application.visualizer.enabled // false' "$CONFIG_FILE")
+VIS_PORT=$(jq -r '.application.visualizer.web_port // 5001' "$CONFIG_FILE")
+RESULTS_PUB_PORT=$(jq -r '.application.results_pub_port // 5559' "$CONFIG_FILE")
+RESULTS_PUB_ENABLED=$(jq -r 'if .application.enable_results_publishing == null then "true" else (.application.enable_results_publishing | tostring) end' "$CONFIG_FILE")
 
 echo "E3 Manager config: $CONFIG_FILE"
 echo "Debug mode: $E3_DEBUG_ENABLED"
 
 # Function to cleanup on exit
 cleanup() {
+    rc=$?
+    [ -n "$CLEANED" ] && return; CLEANED=1
     echo "Caught signal, stopping..."
-    if [ -n "$DAPP_PID" ]; then
-        kill -SIGTERM "$DAPP_PID" 2>/dev/null
-    fi
-    wait "$DAPP_PID" 2>/dev/null
+    [ -n "$VIS_PID" ]  && kill -SIGTERM "$VIS_PID"  2>/dev/null || true
+    [ -n "$DAPP_PID" ] && kill -SIGTERM "$DAPP_PID" 2>/dev/null || true
+    [ -n "$VIS_PID" ] && wait "$VIS_PID" 2>/dev/null || true
+    wait "$DAPP_PID" 2>/dev/null || true
     echo "Cleanup complete."
-    exit 0
+    exit $rc
 }
 
-trap cleanup SIGTERM SIGINT
+trap cleanup EXIT SIGTERM SIGINT
 
 # Check if we're running with proper GPU access
 if nvidia-smi &>/dev/null; then
@@ -79,18 +86,24 @@ python3 "$SCRIPTS_DIR/create_libtorch_model.py"
 echo "=== Model generation complete ==="
 
 # Build PRB Power dApp command
-DAPP_CMD="/opt/dapp/bin/prb_power_dapp --config \"$CONFIG_FILE\""
-
-if [ "$E3_DEBUG_ENABLED" = "true" ]; then
-    DAPP_CMD="$DAPP_CMD --debug"
-fi
+DAPP_ARGS=(--config "$CONFIG_FILE")
 
 # Start PRB Power dApp
 echo "Starting PRB Power dApp with command:"
-echo "$DAPP_CMD"
-eval "$DAPP_CMD" 2>&1 | tee "$LOG_DIR/$E3_MANAGER_LOG" &
+echo "/opt/dapp/bin/prb_power_dapp ${DAPP_ARGS[*]}"
+/opt/dapp/bin/prb_power_dapp "${DAPP_ARGS[@]}" > >(tee "$LOG_DIR/$E3_MANAGER_LOG") 2>&1 &
 DAPP_PID=$!
 echo "PRB Power dApp started with PID: $DAPP_PID"
+
+# Start web visualizer (background, optional)
+if [ "${VIS_ENABLED,,}" = "true" ]; then
+    [ "${RESULTS_PUB_ENABLED,,}" != "true" ] && echo "WARNING: visualizer enabled but enable_results_publishing=false; no data feed."
+    VIS_SCRIPT="/opt/src/applications/prb-power-triton/visualizer/prb_power_visualizer.py"
+    : > "$LOG_DIR/$VIS_LOG"
+    python3 "$VIS_SCRIPT" --port "$VIS_PORT" --zmq-port "$RESULTS_PUB_PORT" > "$LOG_DIR/$VIS_LOG" 2>&1 &
+    VIS_PID=$!
+    echo "Visualizer PID: $VIS_PID  (http://localhost:$VIS_PORT)"
+fi
 
 echo "Running. Press Ctrl+C to stop."
 wait "$DAPP_PID"

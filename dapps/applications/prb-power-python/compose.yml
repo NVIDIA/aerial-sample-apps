@@ -28,8 +28,10 @@ services:
     environment:
       - NVIDIA_VISIBLE_DEVICES=all    # MIG Partition ID if enabled (e.g., MIG-xyz)
       - CUDA_VISIBLE_DEVICES=0        # MIG Partition ID if enabled (e.g., MIG-xyz)
+      - E3_CONFIG=${E3_CONFIG:-/opt/src/applications/prb-power-python/config/e3_config.json}
     network_mode: "host"
     volumes:
       - ./logs:/logs
+      - ./config:/opt/src/applications/prb-power-python/config:ro
     privileged: true
     ipc: ${IPC_MODE:-container:nv-cubb}

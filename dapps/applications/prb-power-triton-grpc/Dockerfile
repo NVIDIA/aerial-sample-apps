@@ -31,6 +31,7 @@ RUN apt-get update && apt-get install -y \
     libzmq3-dev \
     pkg-config \
     python3-pip \
+    nlohmann-json3-dev \
     && rm -rf /var/lib/apt/lists/*
 
 # Fix UCC/UCX ABI mismatch in SDK image (missing ucs_config_doc_nop symbol)

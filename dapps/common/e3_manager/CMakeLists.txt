@@ -27,12 +27,12 @@ add_library(aerial_dapp_core STATIC
 target_include_directories(aerial_dapp_core
     PUBLIC
         ${CMAKE_CURRENT_SOURCE_DIR}
-        ${CMAKE_SOURCE_DIR}/common/deps
 )
 
 target_link_libraries(aerial_dapp_core
     PUBLIC
         PkgConfig::ZMQ
         Threads::Threads
+        nlohmann_json::nlohmann_json
         rt    # POSIX shared memory (shm_open, mmap)
 )

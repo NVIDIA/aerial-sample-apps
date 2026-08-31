@@ -40,8 +40,7 @@ E3Manager::E3Manager(const std::string& bind_address,
                      uint32_t results_pub_port,
                      uint32_t subscription_response_timeout_s,
                      const std::string& shm_key,
-                     bool shm_required,
-                     bool auto_setup)
+                     bool shm_required)
     : bind_address_(bind_address), engine_(engine), 
       model_name_(default_model_name),
       dapp_name_(dapp_name), dapp_version_(dapp_version), vendor_(vendor),
@@ -49,13 +48,14 @@ E3Manager::E3Manager(const std::string& bind_address,
       results_pub_port_(results_pub_port),
       subscription_response_timeout_s_(subscription_response_timeout_s),
       shm_key_(shm_key),
-      shm_required_(shm_required),
-      auto_setup_(auto_setup) {
+      shm_required_(shm_required) {
     
     // Initialize agent states from configs
     for (const auto& config : agent_configs) {
         auto agent_state = std::make_unique<E3AgentState>();
         agent_state->config = config;
+        agent_state->auto_setup_active = config.auto_setup;
+        agent_state->auto_subscribe_active = config.auto_subscription.enabled;
         agents_[config.name] = std::move(agent_state);
     }
     
@@ -65,10 +65,12 @@ E3Manager::E3Manager(const std::string& bind_address,
     for (const auto& [name, agent] : agents_) {
         std::cout << "    " << name << ": " << agent->config.host << ":" 
                   << agent->config.agent_rep_port << " (REP), :" << agent->config.agent_pub_port << " (PUB), :"
-                  << agent->config.agent_sub_port << " (SUB)" << std::endl;
+                  << agent->config.agent_sub_port << " (SUB)"
+                  << " [auto_setup=" << (agent->config.auto_setup ? "on" : "off")
+                  << ", auto_subscribe=" << (agent->config.auto_subscription.enabled ? "on" : "off") << "]"
+                  << std::endl;
     }
     std::cout << "  Default inference model: " << model_name_ << std::endl;
-    std::cout << "  Auto setup: " << (auto_setup_ ? "enabled" : "disabled") << std::endl;
 }
 
 E3Manager::~E3Manager() {
@@ -77,19 +79,16 @@ E3Manager::~E3Manager() {
 
 void E3Manager::Start() {
     running_ = true;
+    stopped_ = false;
     
     // Open shared memory for RAN buffers
     OpenRanSharedMemory();
-    
-    // Start threads
-    client_thread_ = std::thread(&E3Manager::ClientRequestLoop, this);
-    service_thread_ = std::thread(&E3Manager::ServiceLoop, this);
     
     // Initialize inference engine and register shared memory if available
     if (engine_) {
         engine_->Initialize(ran_shm_size_);
         if (ran_shm_size_ > 0) {
-            engine_->RegisterSharedMemory(shm_key_, ran_shm_size_);
+            engine_shm_registered_ = engine_->RegisterSharedMemory(shm_key_, ran_shm_size_);
         }
     }
     
@@ -124,18 +123,30 @@ void E3Manager::Start() {
         }
     }
 
+    // Start threads
+    client_thread_ = std::thread(&E3Manager::ClientRequestLoop, this);
+    service_thread_ = std::thread(&E3Manager::ServiceLoop, this);
+
     std::cout << "E3 Manager started" << std::endl;
 }
 
 void E3Manager::Stop() {
-    running_ = false;
-    
-    // Terminate ZMQ contexts to unblock threads
+    if (stopped_.exchange(true)) return;
+
+    // Release connected agents before tearing down.
     for (auto& [agent_name, agent_state] : agents_) {
-        if (agent_state->zmq_context) {
-            agent_state->zmq_context->close();
+        if (agent_state->state == e3::E3State::CONNECTED && agent_state->dapp_id != 0) {
+            nlohmann::json release_msg;
+            release_msg["type"] = "releaseMessage";
+            release_msg["id"] = GenerateMessageId();
+            release_msg["dAppIdentifier"] = agent_state->dapp_id;
+            PublishToAgent(agent_name, release_msg.dump());
+            std::cout << "Agent " << agent_name << ": Sent e3_release on shutdown" << std::endl;
         }
     }
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));  // let PUB flush before close
+
+    running_ = false;
     
     // Stop all per-agent subscription threads
     for (auto& [agent_name, agent_state] : agents_) {
@@ -144,9 +155,30 @@ void E3Manager::Stop() {
         }
     }
     
-    // Join all threads
+    // Join before teardown so no thread can touch the sockets or contexts.
     if (service_thread_.joinable()) service_thread_.join();
     if (client_thread_.joinable()) client_thread_.join();
+
+    // Close sockets before their context: zmq_ctx_term blocks until every socket on it is closed.
+    for (auto& [agent_name, agent_state] : agents_) {
+        {
+            std::lock_guard<std::mutex> lock(agent_state->pub_socket_mutex);
+            if (agent_state->pub_socket) {
+                agent_state->pub_socket->close();
+                agent_state->pub_socket.reset();
+            }
+        }
+        {
+            std::lock_guard<std::mutex> lock(agent_state->req_socket_mutex);
+            if (agent_state->req_socket) {
+                agent_state->req_socket->close();
+                agent_state->req_socket.reset();
+            }
+        }
+        if (agent_state->zmq_context) {
+            agent_state->zmq_context->close();
+        }
+    }
 
     // Clear any remaining subscription data and unload models
     for (auto& [agent_name, agent_state] : agents_) {
@@ -179,15 +211,6 @@ void E3Manager::Stop() {
         std::cout << "Results publisher closed" << std::endl;
     } catch (const zmq::error_t& e) {
         std::cerr << "Error closing results publisher: " << e.what() << std::endl;
-    }
-    
-    // Close per-agent PUB sockets
-    for (auto& [name, agent] : agents_) {
-        std::lock_guard<std::mutex> lock(agent->pub_socket_mutex);
-        if (agent->pub_socket) {
-            agent->pub_socket->close();
-            agent->pub_socket.reset();
-        }
     }
     
     CloseRanSharedMemory();
@@ -226,6 +249,8 @@ void E3Manager::OpenRanSharedMemory() {
             std::cout << "  Max H estimates samples per row: " << header->max_hest_samples_per_row << std::endl;
         } else {
             std::cerr << "Failed to map RAN shared memory: " << strerror(errno) << std::endl;
+            ran_shm_ptr_ = nullptr;
+            ran_shm_size_ = 0;
             close(ran_shm_fd_);
             ran_shm_fd_ = -1;
         }
@@ -251,7 +276,7 @@ void E3Manager::ClearSubscription(E3AgentState& agent, const std::string& agent_
     if (!agent.subscription.has_value()) return;
 
     std::string model_to_clear = agent.subscription->model_name;
-    std::cout << "Agent " << agent_name << ": Clearing subscription (model=" << model_to_clear << ")" << std::endl;
+    std::cout << "Agent " << agent_name << ": Clearing subscription" << std::endl;
     agent.subscription.reset();
 
     bool model_in_use = false;
@@ -269,6 +294,7 @@ void E3Manager::ClearSubscription(E3AgentState& agent, const std::string& agent_
 }
 
 bool E3Manager::HandleE3Subscription(const std::vector<uint32_t>& telemetry_ids,
+                                    const std::vector<uint32_t>& control_ids,
                                     uint32_t ran_function_id,
                                     uint32_t periodicity_us,
                                     uint32_t subscription_time_s,
@@ -325,7 +351,7 @@ bool E3Manager::HandleE3Subscription(const std::vector<uint32_t>& telemetry_ids,
               << ") with verified model '" << model_name << "' and periodicity " << periodicity_us << "us" << std::endl;
     
     // Build and publish subscription request via PUB-SUB (dApp PUB -> Agent SUB)
-    json sub_req = CreateE3SubscriptionRequestMessage(telemetry_ids, ran_function_id, periodicity_us, subscription_time_s);
+    json sub_req = CreateE3SubscriptionRequestMessage(telemetry_ids, control_ids, ran_function_id, periodicity_us, subscription_time_s);
     sub_req["dAppIdentifier"] = agent.dapp_id;
     uint32_t request_id = sub_req["id"].get<uint32_t>();
     
@@ -421,14 +447,20 @@ bool E3Manager::HandleE3Setup(const std::string& agent_name, zmq::context_t& ctx
             std::lock_guard<std::mutex> pub_lock(agent.pub_socket_mutex);
             agent.pub_socket.reset();
         }
-        agent.req_socket.reset();
+        {
+            std::lock_guard<std::mutex> req_lock(agent.req_socket_mutex);
+            agent.req_socket.reset();
+        }
         agent.zmq_context.reset();
 
         // Create new ZMQ context for this agent
         agent.zmq_context = std::make_shared<zmq::context_t>(1);
 
         // Initialize persistent REQ socket for this agent
-        agent.req_socket = CreateAgentReqSocket(agent);
+        {
+            std::lock_guard<std::mutex> req_lock(agent.req_socket_mutex);
+            agent.req_socket = CreateAgentReqSocket(agent);
+        }
 
         // Recreate PUB socket with new context
         CreateAgentPubSocket(agent);
@@ -471,6 +503,9 @@ bool E3Manager::HandleE3SubscriptionDelete(const std::string& agent_name, std::s
         return false;
     }
     
+    // Explicit unsubscribe overrides auto-subscription (would otherwise re-subscribe next cycle)
+    agent.auto_subscribe_active = false;
+
     uint32_t sub_id_to_cancel = agent.subscription->subscription_id;
     std::cout << "Requesting subscription delete for agent '" << agent_name 
               << "' subscription_id: " << sub_id_to_cancel << std::endl;
@@ -533,7 +568,8 @@ void E3Manager::HandleE3Release(const std::string& agent_name) {
 
     agent.dapp_id = 0;
     agent.state = e3::E3State::DISCONNECTED;
-    auto_setup_ = false;
+    agent.auto_setup_active = false;
+    agent.auto_subscribe_active = false;
     std::cout << "Agent " << agent_name << ": Released (auto_setup disabled)" << std::endl;
 }
 
@@ -587,6 +623,7 @@ void E3Manager::ClientRequestLoop() {
                             response_json["message"] = "subscribe request requires 'telemetryIdentifierList'";
                         } else {
                             std::vector<uint32_t> telemetry_ids = req_json["telemetryIdentifierList"].get<std::vector<uint32_t>>();
+                            std::vector<uint32_t> control_ids = req_json.value("controlIdentifierList", std::vector<uint32_t>{});
                             uint32_t ran_function_id = req_json.value("ranFunctionIdentifier", 2u);
                             uint32_t periodicity = req_json.value("periodicity", 100000u);
                             uint32_t subscription_time = req_json.value("subscriptionTime", 0u);
@@ -601,7 +638,7 @@ void E3Manager::ClientRequestLoop() {
                                 response_json["message"] = "No connected agents available";
                             } else {
                                 std::string subscription_error;
-                                bool success = HandleE3Subscription(telemetry_ids, ran_function_id, periodicity, subscription_time, model_name, agent_name, subscription_error);
+                                bool success = HandleE3Subscription(telemetry_ids, control_ids, ran_function_id, periodicity, subscription_time, model_name, agent_name, subscription_error);
                                 if (success) {
                                     response_json["status"] = "sent";
                                     response_json["message"] = "subscription request sent";
@@ -845,7 +882,9 @@ void E3Manager::E3AgentSubscriptionLoop(const std::string& agent_name) {
             }
         }
     } catch (const zmq::error_t& e) {
-        std::cerr << "Agent " << agent_name << ": Notification loop error: " << e.what() << std::endl;
+        if (e.num() != ETERM) {    // ETERM = expected unblock on context teardown
+            std::cerr << "Agent " << agent_name << ": Notification loop error: " << e.what() << std::endl;
+        }
         ClearSubscription(agent, agent_name);
         agent.state = e3::E3State::DISCONNECTED;
     }
@@ -901,6 +940,8 @@ void E3Manager::ProcessE3SubscriptionResponse(const json& response, const std::s
                   << err_msg << std::endl;
         if (agent.subscription->status == SubscriptionStatus::PENDING_REQUEST) {
             ClearSubscription(agent, agent_name);
+            // Explicit rejection is deterministic: stop auto-retrying
+            agent.auto_subscribe_active = false;
             std::cout << "Agent " << agent_name << ": Rolled back pending subscription" << std::endl;
         }
         // If pending delete failed, revert to confirmed (subscription still exists on agent)
@@ -938,7 +979,8 @@ bool E3Manager::ProcessE3Release(const json& release, const std::string& agent_n
     }
     agent.dapp_id = 0;
     agent.state = e3::E3State::DISCONNECTED;
-    auto_setup_ = false;
+    agent.auto_setup_active = false;
+    agent.auto_subscribe_active = false;
     return true;  // Signal caller to break out of subscription loop
 }
 
@@ -968,7 +1010,7 @@ void E3Manager::ProcessE3Indication(const json& indication, const std::string& a
         const json& payload = indication["protocolData"];
 
         if (debug_enabled) {
-            std::cout << "Processing E3 Indication from agent " << agent_name << " (dApp " << agent.dapp_id 
+            std::cout << "\nProcessing E3 Indication from agent " << agent_name << " (dApp " << agent.dapp_id 
                       << ") model '" << sub.model_name << std::endl;
             e3::ProcessIQSampleDebug(payload, ran_shm_ptr_);
             e3::ProcessHEstimatesDebug(payload, ran_shm_ptr_);
@@ -1022,11 +1064,11 @@ void E3Manager::ServiceLoop() {
         // Check shared memory connection (if required)
         if (shm_required_ && ran_shm_fd_ == -1) {
             OpenRanSharedMemory();
-            
-            // If just became available, register with inference engine
-            if (ran_shm_fd_ != -1 && engine_) {
-                engine_->RegisterSharedMemory(shm_key_, ran_shm_size_);
-            }
+        }
+
+        // Retry engine SHM registration until it succeeds (backend may be slow to ready).
+        if (engine_ && ran_shm_fd_ != -1 && !engine_shm_registered_) {
+            engine_shm_registered_ = engine_->RegisterSharedMemory(shm_key_, ran_shm_size_);
         }
         
         // Check each agent's connection state
@@ -1034,10 +1076,37 @@ void E3Manager::ServiceLoop() {
             E3AgentState& agent = *agent_state;
             
             // --- Handle Setup for Disconnected Agents ---
-            if (auto_setup_ && agent.state != e3::E3State::CONNECTED) {
+            if (agent.auto_setup_active && agent.state != e3::E3State::CONNECTED) {
+                agent.auto_subscribe_first_attempt = {};  // fresh readiness window per (re)connect
                 std::string setup_error;
                 if (!HandleE3Setup(agent_name, context, setup_error)) {
                     std::cout << "Agent " << agent_name << ": " << setup_error << ", will retry..." << std::endl;
+                }
+            }
+            // --- Auto-subscribe once connected ---
+            // Defers the first subscribe by one cycle after setup to let the PUB/SUB link settle.
+            else if (agent.auto_subscribe_active &&
+                     agent.state == e3::E3State::CONNECTED &&
+                     agent.pending_request_id == 0 &&
+                     !agent.subscription.has_value()) {
+                const auto& opts = agent.config.auto_subscription;
+                const std::string& model = opts.model.empty() ? model_name_ : opts.model;
+                std::string sub_error;
+                if (!HandleE3Subscription(opts.telemetry_ids, opts.control_ids, opts.ran_function_id,
+                                          opts.periodicity_us, opts.subscription_time_s, model,
+                                          agent_name, sub_error)) {
+                    // Backend/model may still be loading: retry until the deadline, then give up.
+                    auto now = std::chrono::steady_clock::now();
+                    if (agent.auto_subscribe_first_attempt.time_since_epoch().count() == 0) {
+                        agent.auto_subscribe_first_attempt = now;
+                        std::cout << "Agent " << agent_name << ": Auto-subscribe deferred (" << sub_error
+                                  << "), retrying" << std::endl;
+                    } else if (now - agent.auto_subscribe_first_attempt >
+                               std::chrono::seconds(AUTO_SUBSCRIBE_READY_TIMEOUT_S)) {
+                        std::cerr << "Agent " << agent_name << ": Auto-subscribe failed (" << sub_error
+                                  << "), disabling" << std::endl;
+                        agent.auto_subscribe_active = false;
+                    }
                 }
             }
             
@@ -1055,6 +1124,8 @@ void E3Manager::ServiceLoop() {
                     if (agent.subscription.has_value()) {
                         if (agent.subscription->status == SubscriptionStatus::PENDING_REQUEST) {
                             ClearSubscription(agent, agent_name);
+                            // Give up auto-subscribe after a timeout
+                            agent.auto_subscribe_active = false;
                             std::cout << "Agent " << agent_name << ": Rolled back pending subscription" << std::endl;
                         } else if (agent.subscription->status == SubscriptionStatus::PENDING_DELETE) {
                             agent.subscription->status = SubscriptionStatus::CONFIRMED;
@@ -1090,7 +1161,7 @@ void E3Manager::CreateAgentPubSocket(E3AgentState& agent) {
     if (!agent.zmq_context) return;
     std::lock_guard<std::mutex> lock(agent.pub_socket_mutex);
     agent.pub_socket = std::make_unique<zmq::socket_t>(*agent.zmq_context, zmq::socket_type::pub);
-    agent.pub_socket->set(zmq::sockopt::linger, 0);
+    agent.pub_socket->set(zmq::sockopt::linger, 200);
     agent.pub_socket->set(zmq::sockopt::sndhwm, 1000);
     agent.pub_socket->connect("tcp://" + agent.config.host + ":" + std::to_string(agent.config.agent_sub_port));
 }
@@ -1119,15 +1190,14 @@ uint32_t E3Manager::GenerateMessageId() {
     return message_counter_.fetch_add(1);
 }
 
-nlohmann::json E3Manager::CreateE3SubscriptionRequestMessage(const std::vector<uint32_t>& telemetry_ids, uint32_t ran_function_id, uint32_t periodicity_us, uint32_t subscription_time_s) {
+nlohmann::json E3Manager::CreateE3SubscriptionRequestMessage(const std::vector<uint32_t>& telemetry_ids, const std::vector<uint32_t>& control_ids, uint32_t ran_function_id, uint32_t periodicity_us, uint32_t subscription_time_s) {
     json e3_sub_req;
 
     e3_sub_req["type"] = "subscriptionRequest";
     e3_sub_req["id"] = GenerateMessageId();
-    // dAppIdentifier is added per-agent in HandleE3Subscription
     e3_sub_req["ranFunctionIdentifier"] = ran_function_id;
     e3_sub_req["telemetryIdentifierList"] = telemetry_ids;
-    e3_sub_req["controlIdentifierList"] = json::array();
+    e3_sub_req["controlIdentifierList"] = control_ids;
     e3_sub_req["periodicity"] = periodicity_us;
     e3_sub_req["subscriptionTime"] = subscription_time_s;
 

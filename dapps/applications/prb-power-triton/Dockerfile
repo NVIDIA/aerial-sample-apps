@@ -24,6 +24,7 @@ RUN apt-get update && apt-get install -y \
     libzmq3-dev \
     pkg-config \
     python3-pip \
+    nlohmann-json3-dev \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Python dependencies

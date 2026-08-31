@@ -23,7 +23,7 @@
 
 cmake_minimum_required(VERSION 3.18)
 project(aerial_dapps
-    VERSION 1.0.0
+    VERSION 1.1.0
     DESCRIPTION "NVIDIA Aerial dApp Applications"
     LANGUAGES CXX
 )
@@ -36,6 +36,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(ZMQ REQUIRED IMPORTED_TARGET libzmq)
 find_package(Threads REQUIRED)
+find_package(nlohmann_json REQUIRED)
 
 # --- Shared core ---
 add_subdirectory(common/e3_manager)

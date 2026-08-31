@@ -28,12 +28,10 @@ services:
     environment:
       - NVIDIA_VISIBLE_DEVICES=all    # MIG Partition ID if enabled (e.g., MIG-xyz)
       - CUDA_VISIBLE_DEVICES=0        # MIG Partition ID if enabled (e.g., MIG-xyz)
-      # MPS configuration - Uncomment these lines if using MPS instead of MIG:
-      # - CUDA_DEVICE_MAX_CONNECTIONS=8
-      # - CUDA_MPS_PIPE_DIRECTORY=/var
-      # - CUDA_MPS_LOG_DIRECTORY=/var
+      - E3_CONFIG=${E3_CONFIG:-/opt/src/applications/prb-power-triton-grpc/config/e3_config.json}
     network_mode: "host"
     volumes:
       - ./logs:/logs
+      - ./config:/opt/src/applications/prb-power-triton-grpc/config:ro
     privileged: true
     ipc: ${IPC_MODE:-container:nv-cubb}
