@@ -55,9 +55,12 @@ esac
 echo "=== Restart Script for PRB Power dApp (Triton gRPC) ==="
 
 CONTAINER_PREFIX="/opt/src/applications/prb-power-triton-grpc"
-export E3_CONFIG="$CONTAINER_PREFIX/$CONFIG_FILE"
+export E3_CONFIG="$CONTAINER_PREFIX/config/$(realpath --relative-to=config "$CONFIG_FILE")"
 
-IPC_MODE=$(jq -r '.deployment.ipc_mode // "container:nv-cubb"' "$CONFIG_FILE")
+IPC_MODE=$(jq -r '.deployment.ipc_mode // "container:nv-cubb"' "$CONFIG_FILE") || {
+    echo "ERROR: could not read deployment.ipc_mode from $CONFIG_FILE" >&2
+    exit 1
+}
 echo "IPC mode: $IPC_MODE"
 export IPC_MODE
 

@@ -83,7 +83,7 @@ The `config/e3_config.json` file controls all runtime settings:
   },
   "application": {
     "name": "PRB Power Triton gRPC",
-    "version": "1.1.0",
+    "version": "1.2.0",
     "vendor": "NVIDIA",
     "results_pub_port": 5559,
     "enable_results_publishing": true,

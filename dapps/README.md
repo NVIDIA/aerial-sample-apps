@@ -2,6 +2,8 @@
 
 Real-time RAN data processing framework using a pre-standard version of the E3 interface and E3 Application Protocol (E3AP). The E3 Manager orchestrates data flow between E3 Agents (NVIDIA Aerial cuBB L1, OpenAirInterface L2, or other E3-compliant components) and pluggable application logic (inference engines, data analytics, custom processing).
 
+New features, changes, fixes, and limitations of each release are listed in [CHANGELOG.md](CHANGELOG.md).
+
 ## Project Structure
 
 ```
@@ -47,7 +49,7 @@ The E3 Agent exposes the following uplink data streams through the NVIDIA KPM Se
 | IQ & Channel | IQ samples, DMRS estimates, PUSCH data | Raw fronthaul IQ, DMRS channel estimates, decoded PUSCH (shared memory) |
 | Frame info | SFN, Slot, Timestamp | System Frame Number, slot index, agent-side nanosecond timestamp |
 | Cell & Antenna | Cell ID, RX antennas, BS antennas, Cells | Physical cell ID, antenna counts |
-| Channel quality | RSRP, RSSI, CQI, MCS index, QAM order | PHY-layer measurements and modulation parameters |
+| Channel quality | RSRP, RSSI, SINR, noise variance, MCS index, QAM order | PHY-layer measurements and modulation parameters |
 | PUSCH | TB CRC fail, CB errors, CB count | Transport/code block error indicators |
 | Resource allocation | RB start, RB size, Symbols, Subcarriers, MIMO layers | Frequency/time resource assignment |
 | SRS | SRS IQ, SRS channel estimates, per-RB SNR, SRS data | Uplink SRS samples, per-UE channel estimates, and per-band SNR |

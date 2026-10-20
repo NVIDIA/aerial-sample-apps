@@ -42,7 +42,9 @@ Each application is a self-contained executable that connects to the shared E3 M
 
 ## Available Data Streams
 
-Data from the E3 Agent arrives in the indication payload JSON. Large data (e.g., IQ samples, channel estimates) is delivered via shared memory references; small data (scalars, metadata) is inline. Cell-level fields (timing, antenna count, shared memory references) are top-level keys in `protocolData`. Per-UE fields (RNTI, MCS, SINR, H-estimate metadata, SRS metrics, etc.) are delivered inside a `ue_metrics[]` array with one entry per scheduled UE.
+Data from the E3 Agent arrives in the indication payload JSON. Large data (e.g., IQ samples, channel estimates) is delivered via shared memory references; small data (scalars, metadata) is inline. Slot-shared scalars (`timestamp`, `timestamp_tai`, `sfn`, `slot`, `n_cells`) are top-level keys in `protocolData`; all per-cell data lives in a `cells[]` array, one entry per active cell, each with its own cell-level fields and a nested `ues[]` array of per-UE fields. Single-cell dApps read `cells[0]`; multi-cell dApps iterate `cells[]`.
+
+In the stream tables below, **Scope** indicates placement: **Slot** fields (the five scalars above) at the `protocolData` root, **Cell** fields as keys of each `cells[]` element, **Per-UE** fields as keys of `ues[]`.
 
 Indications arrive on two independent paths:
 - **PUSCH** — fires once per PUSCH slot
@@ -54,14 +56,14 @@ Some streams are **shared** (delivered on both paths when subscribed); others ar
 
 | ID | Field | Path | Scope | Transport | Description |
 |:--:|-------|:----:|:-----:|-----------|-------------|
-| 4 | `timestamp` | Shared | Cell | Inline | Software timestamp (ns) captured when Data Lake processes the slot |
-| 5 | `sfn` | Shared | Cell | Inline | System Frame Number |
-| 6 | `slot` | Shared | Cell | Inline | Slot Number |
+| 4 | `timestamp` | Shared | Slot | Inline | Software timestamp (ns) captured when Data Lake processes the slot |
+| 5 | `sfn` | Shared | Slot | Inline | System Frame Number |
+| 6 | `slot` | Shared | Slot | Inline | Slot Number |
 | 7 | `cell_id` | Shared | Cell | Inline | Physical Cell ID |
 | 9 | `n_rx_ant_srs` | Shared | Cell | Inline | Number of SRS RX antennas |
-| 10 | `n_cells` | Shared | Cell | Inline | Number of cells |
+| 10 | `n_cells` | Shared | Slot | Inline | Number of cells |
 | 33 | `rnti` | Shared | Per-UE | Inline | Radio Network Temporary Identifier |
-| 78 | `timestamp_tai` | Shared | Cell | Inline | TAI timestamp (ns) aligned from SFN/slot via grandmaster clock |
+| 78 | `timestamp_tai` | Shared | Slot | Inline | TAI timestamp (ns) aligned from SFN/slot via grandmaster clock |
 
 **PUSCH streams** (delivered only on the PUSCH indication path):
 
@@ -93,7 +95,7 @@ Some streams are **shared** (delivered on both paths when subscribed); others ar
 | 30 | `pdu_len` | PUSCH | Per-UE | Inline | PDU length (tb_size on CRC pass, 0 on fail) |
 | 31 | `target_code_rate` | PUSCH | Per-UE | Inline | Target code rate x10 |
 | 32 | `new_data_indicator` | PUSCH | Per-UE | Inline | New data indicator |
-| 34 | `n_ue` | PUSCH | Cell | Inline | Number of PUSCH UEs in this slot |
+| 34 | `n_ue` | PUSCH | Cell | Inline | Number of PUSCH UEs in this cell |
 | 35 | `layer_offset` | PUSCH | Per-UE | Inline | Starting layer in group H matrix (0 for FDM) |
 | 36 | `ue_grp_idx` | PUSCH | Per-UE | Inline | cuPHY internal UE group index |
 | 37 | `h_offset` | PUSCH | Per-UE | Inline | Element offset (float2) of group H data in SHM row |
@@ -103,6 +105,7 @@ Some streams are **shared** (delivered on both paths when subscribed); others ar
 | 41 | `harq_process_id` | PUSCH | Per-UE | Inline | HARQ process ID (0-15) |
 | 42 | `rv_index` | PUSCH | Per-UE | Inline | Redundancy version index (0-3) |
 | 43 | `cfo_hz` | PUSCH | Per-UE | Inline | Carrier Frequency Offset in Hz |
+| 79 | `pdu_offset` | PUSCH | Per-UE | Inline | Byte offset of this UE's PDU within the cell's PUSCH SHM blob |
 
 **SRS streams** (delivered only on the SRS indication path):
 
@@ -196,7 +199,7 @@ using IndicationHandler = std::function<void(const IndicationContext& ctx)>;
 
 The `agent_name` field identifies which E3 Agent produced the indication (e.g. `"NVIDIA_L1"`, `"OAI_L2"`). This is essential for multi-agent dApps that receive data from different network layers and need to dispatch to different extraction logic per agent.
 
-PUSCH and SRS indications invoke the same handler; distinguish the path by checking for a field that only one path provides (e.g. `iq_samples` for PUSCH, `srs_iq_samples` for SRS). Subscriptions made only of shared streams, such as `sfn` and `slot`, fire on both paths and give indistinguishable payloads.
+PUSCH and SRS indications invoke the same handler; distinguish the path by checking for a per-cell field that only one path provides (e.g. `cells[0].iq_samples` for PUSCH, `cells[0].srs_iq_samples` for SRS). Subscriptions made only of shared streams, such as `sfn` and `slot`, fire on both paths and give indistinguishable payloads.
 
 Your handler has full control over what happens with the data. You can run inference through an engine, process data directly in C++/Python, or anything else.
 
@@ -206,19 +209,22 @@ Reads cell-level and per-UE metadata from the indication payload (assuming you h
 
 ```cpp
 static void ProcessMyApp(const e3::IndicationContext& ctx) {
-    int sfn = ctx.payload.value("sfn", 0);       // cell-level
-    int slot = ctx.payload.value("slot", 0);      // cell-level
-    for (const auto& ue : ctx.payload["ue_metrics"]) {
-        int rnti = ue.value("rnti", 0);           // per-UE
-        int mcs = ue.value("mcs_index", -1);      // per-UE
-        LOG_INFO("sfn={} slot={} rnti={} mcs={}", sfn, slot, rnti, mcs);
+    int sfn = ctx.payload.value("sfn", 0);        // slot-shared
+    int slot = ctx.payload.value("slot", 0);      // slot-shared
+    for (const auto& cell : ctx.payload["cells"]) {
+        int cell_id = cell.value("cell_id", -1);  // per-cell
+        for (const auto& ue : cell["ues"]) {
+            int rnti = ue.value("rnti", 0);       // per-UE
+            int mcs = ue.value("mcs_index", -1);  // per-UE
+            LOG_INFO("sfn={} slot={} cell={} rnti={} mcs={}", sfn, slot, cell_id, rnti, mcs);
+        }
     }
 }
 ```
 
 #### Inference-based handler example (any engine)
 
-Both reference apps (Triton and embedded Python) use a convention where model input names from `GetModelMetadata()` match the E3 data stream field names in the indication payload (e.g., the model declares an input called `iq_samples`, which matches the field name in the JSON payload). The handler iterates model inputs, checks if the corresponding field exists in the payload, and builds the inference inputs automatically. This is a design choice in the reference apps, not a framework constraint. Your handler can access payload fields directly by name without metadata-driven mapping.
+Both reference apps (Triton and embedded Python) use a convention where model input names from `GetModelMetadata()` match the E3 data stream field names in the indication payload (e.g., the model declares an input called `iq_samples`, which matches the field name inside each `cells[]` element). Because these are single-cell reference apps, the handler operates on `cells[0]`, iterates model inputs, checks if the corresponding field exists in that cell, and builds the inference inputs automatically. A multi-cell dApp would loop over `cells[]` instead. This is a design choice in the reference apps, not a framework constraint. Your handler can access payload fields directly by name without metadata-driven mapping.
 
 ```cpp
 #include "e3_manager.h"
@@ -228,17 +234,21 @@ static void ProcessMyApp(const e3::IndicationContext& ctx) {
     auto metadata = ctx.engine->GetModelMetadata(ctx.model_name);
     if (!metadata) return;
 
-    // 2. Build inputs from the indication payload
+    // Single-cell app: operate on cells[0] (multi-cell apps loop over cells[]).
+    if (!ctx.payload.contains("cells") || ctx.payload["cells"].empty()) return;
+    const auto& cell = ctx.payload["cells"][0];
+
+    // 2. Build inputs from the cell payload
     std::vector<e3::TensorInput> inputs;
     for (const auto& model_input : metadata->inputs) {
-        if (!ctx.payload.contains(model_input.name)) return;  // missing data
+        if (!cell.contains(model_input.name)) return;  // missing data
 
         e3::TensorInput tin;
         tin.name = model_input.name;
         tin.datatype = model_input.type;
         tin.shape = model_input.shape;
 
-        const auto& data = ctx.payload[model_input.name];
+        const auto& data = cell[model_input.name];
 
         if (data.is_object() && data.contains("fh_buffer_index")) {
             // PUSCH FH IQ shared memory reference (zero-copy)
@@ -496,7 +506,13 @@ The TDD pattern affects the effective data rate. With a typical DDDDDDSUUU patte
 
 If the natural TDD gaps are not sufficient, set the periodicity to at least your worst-case processing time. For example, if inference takes ~4 ms, request a periodicity of 5000 us (`-p 5000`) instead of receiving one indication every slot. Alternatively, the handler could accumulate multiple indications and batch them before running inference, which can improve throughput for models that benefit from batched input.
 
-SRS indications arrive much less frequently than PUSCH: the period is `T_SRS` slots (per `srs_t_srs` in `ue_metrics[]`, typically 40-160 slots, i.e. 20-80 ms with 30 kHz SCS). A subscription with `-p 0` on SRS streams will still only fire on actual SRS slots, not every slot.
+SRS indications usually arrive much less frequently than PUSCH: the period is `T_SRS` slots (per `srs_t_srs` in `ues[]`, typically 40-160 slots, i.e. 20-80 ms with 30 kHz SCS). A subscription with `-p 0` on SRS streams will still only fire on actual SRS slots, not every slot.
+
+### Multi-Cell Deployments
+
+A single E3 Agent serves the whole cell group. Each indication carries one `cells[]` entry per active cell (`n_cells` at the root); PUSCH and SRS share the same nesting. Each cell owns its shared memory references and `ues[]`, so per-UE H and PDU are sliced within the owning cell's blob. Single-cell dApps read `cells[0]`; multi-cell dApps loop over `cells[]` and key results by `cell_id`.
+
+The multi-cell path has been validated against the NVIDIA Aerial cuBB L1 on a DDDSU TDD pattern: PUSCH + SRS data collection at full throughput up to 4 cells with Data Lake and E3 Agent enabled, and up to 10 cells with just the E3 Agent enabled.
 
 ### Extensibility
 

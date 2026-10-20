@@ -99,13 +99,13 @@ void SaveChannelEstimatesCSV(
     const std::complex<float>* grp_ptr, uint32_t h_size,
     uint8_t n_bs_ants, uint8_t n_layers, uint16_t layer_offset,
     uint16_t n_subcarriers, uint8_t n_dmrs_estimates,
-    uint16_t rnti, uint16_t sfn, uint16_t slot, uint64_t timestamp_ns);
+    uint16_t rnti, uint16_t cell_id, uint16_t sfn, uint16_t slot, uint64_t timestamp_ns);
 
 void SaveChannelEstimatesBinary(
     const std::complex<float>* grp_ptr, uint32_t h_size,
     uint8_t n_bs_ants, uint8_t n_layers, uint16_t layer_offset,
     uint16_t n_subcarriers, uint8_t n_dmrs_estimates,
-    uint16_t rnti, uint16_t ue_grp_idx,
+    uint16_t rnti, uint16_t ue_grp_idx, uint16_t cell_id,
     uint16_t sfn, uint16_t slot, uint64_t timestamp_ns);
 
 } // namespace e3

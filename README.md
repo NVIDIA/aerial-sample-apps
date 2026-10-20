@@ -4,11 +4,13 @@ A collection of example applications and reference implementations for the [NVID
 
 ## Contents
 
-- **[dapps/](dapps/)** — Distributed applications using the E3 interface
+- **[dapps/](dapps/)**: Distributed applications using the E3 interface
   for real-time RAN data processing and control, validated on
   [NVIDIA Aerial Testbed](https://docs.nvidia.com/aerial/testbed/latest/index.html).
 
 Additional sample applications targeting other parts of the AI Aerial platform will be added in future releases.
+
+Each component versions independently; per-release changes are listed in its own `CHANGELOG.md`.
 
 ## NVIDIA AI Aerial™
 
@@ -23,11 +25,11 @@ The following AI Aerial™ software is available as open source:
 
 Visit the [NVIDIA 6G Developer Program](https://developer.nvidia.com/6g-program) for software releases, 6G events and technical training for AI Aerial™.
 
-Per-release changes for every component are listed in [`CHANGELOG.md`](CHANGELOG.md).
-
 ## License
 
-Each subdirectory is a project in its own right; see the `LICENSE` file it contains for details.
+Each subdirectory is a project in its own right, with its own license:
+
+- **[dapps/](dapps/)**: Apache License 2.0, see [`dapps/LICENSE`](dapps/LICENSE).
 
 ## Contributing
 

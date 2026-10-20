@@ -47,7 +47,7 @@ HTML_TEMPLATE = '''
 <html>
 <head>
     <title>PRB Power & Inference Time Visualizer</title>
-    <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
+    <script src="https://cdn.plot.ly/plotly-1.58.5.min.js"></script>
     <style>
         body { 
             font-family: Arial, sans-serif; 

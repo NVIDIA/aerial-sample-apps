@@ -55,9 +55,12 @@ esac
 echo "=== Restart Script for PRB Power dApp (Python) ==="
 
 CONTAINER_PREFIX="/opt/src/applications/prb-power-python"
-export E3_CONFIG="$CONTAINER_PREFIX/$CONFIG_FILE"
+export E3_CONFIG="$CONTAINER_PREFIX/config/$(realpath --relative-to=config "$CONFIG_FILE")"
 
-IPC_MODE=$(python3 -c "import json,sys; print(json.load(open(sys.argv[1])).get('deployment',{}).get('ipc_mode', 'container:nv-cubb'))" "$CONFIG_FILE" 2>/dev/null || echo "container:nv-cubb")
+IPC_MODE=$(python3 -c "import json,sys; print(json.load(open(sys.argv[1])).get('deployment',{}).get('ipc_mode', 'container:nv-cubb'))" "$CONFIG_FILE") || {
+    echo "ERROR: could not read deployment.ipc_mode from $CONFIG_FILE" >&2
+    exit 1
+}
 echo "IPC mode: $IPC_MODE"
 export IPC_MODE
 

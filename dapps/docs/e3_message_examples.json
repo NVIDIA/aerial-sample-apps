@@ -2,7 +2,7 @@
   "_copyright": "SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. SPDX-License-Identifier: Apache-2.0",
   "title": "E3 Protocol Message Examples",
   "description": "Example messages for the E3 Application Protocol (E3AP) and dApp client interface. Includes PUSCH and SRS indication examples.",
-  "version": "1.1.0",
+  "version": "1.2.0",
 
   "e3ap_message_examples": {
 
@@ -13,7 +13,7 @@
         "id": 1,
         "e3apProtocolVersion": "1.0.0",
         "dAppName": "PRB Power",
-        "dAppVersion": "1.0.0",
+        "dAppVersion": "1.2.0",
         "vendor": "NVIDIA"
       }
     },
@@ -31,7 +31,7 @@
         "ranFunctionList": [
           {
             "ranFunctionIdentifier": 2,
-            "telemetryIdentifierList": [1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47,48,49,50,51,52,53,54,55,56,57,58,59,60,61,62,63,64,65,66,67,68,69,70,71,72,73,74,75,76,77,78],
+            "telemetryIdentifierList": [1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47,48,49,50,51,52,53,54,55,56,57,58,59,60,61,62,63,64,65,66,67,68,69,70,71,72,73,74,75,76,77,78,79],
             "controlIdentifierList": [],
             "ranFunctionData": [
               {
@@ -51,7 +51,7 @@
               {
                 "stream_id": "h_estimates",
                 "data_type": "array(complex64)",
-                "description": "PUSCH H matrix estimates (all UE groups concatenated, PUSCH path)",
+                "description": "PUSCH H matrix estimates (per cell, all UE groups concatenated, PUSCH path)",
                 "status": "available",
                 "delivery_method": {
                   "transport_type": "shared_memory",
@@ -211,52 +211,59 @@
           "timestamp_tai": 1642248646715000000,
           "sfn": 512,
           "slot": 5,
-          "cell_id": 51,
-          "n_bs_ants": 4,
-          "iq_samples": {
-            "shm_name": "/e3_ran_buffers",
-            "fh_buffer_index": 0,
-            "fh_write_index": 42
-          },
-          "h_estimates": {
-            "shm_name": "/e3_ran_buffers",
-            "hest_buffer_index": 1,
-            "hest_write_index": 42,
-            "hest_row_byte_offset": 156672
-          },
-          "ue_metrics": [
+          "n_cells": 1,
+          "cells": [
             {
-              "rnti": 2831,
-              "n_layers": 1,
-              "layer_offset": 0,
-              "ue_grp_idx": 0,
-              "h_offset": 0,
-              "h_size": 1152,
-              "n_subcarriers": 96,
-              "n_dmrs_estimates": 3,
-              "dmrs_symb_pos": 1057,
-              "rb_start": 0,
-              "rb_size": 8,
-              "start_symbol_index": 0,
-              "nr_of_symbols": 13,
-              "mcs_index": 15,
-              "mcs_table_index": 0,
-              "qam_mod_order": 6,
-              "target_code_rate": 1200,
-              "tb_size": 1544,
-              "pdu_len": 1544,
-              "tb_crc_fail": 0,
-              "cb_errors": 0,
-              "sinr": 9.57,
-              "noise_var": 1.85,
-              "rsrp": -10.02,
-              "rssi": 16.19,
-              "timing_advance": 0.97,
-              "cfo_hz": 12.5,
-              "harq_process_id": 0,
-              "rv_index": 0,
-              "new_data_indicator": 1,
-              "cb_count": 1
+              "cell_id": 51,
+              "n_bs_ants": 4,
+              "n_ue": 1,
+              "iq_samples": {
+                "shm_name": "/e3_ran_buffers",
+                "fh_buffer_index": 0,
+                "fh_write_index": 42
+              },
+              "h_estimates": {
+                "shm_name": "/e3_ran_buffers",
+                "hest_buffer_index": 1,
+                "hest_write_index": 42,
+                "hest_row_byte_offset": 156672
+              },
+              "ues": [
+                {
+                  "rnti": 2831,
+                  "n_layers": 1,
+                  "layer_offset": 0,
+                  "ue_grp_idx": 0,
+                  "h_offset": 0,
+                  "h_size": 1152,
+                  "n_subcarriers": 96,
+                  "n_dmrs_estimates": 3,
+                  "dmrs_symb_pos": 1057,
+                  "rb_start": 0,
+                  "rb_size": 8,
+                  "start_symbol_index": 0,
+                  "nr_of_symbols": 13,
+                  "mcs_index": 15,
+                  "mcs_table_index": 0,
+                  "qam_mod_order": 6,
+                  "target_code_rate": 1200,
+                  "tb_size": 1544,
+                  "pdu_len": 1544,
+                  "pdu_offset": 0,
+                  "tb_crc_fail": 0,
+                  "cb_errors": 0,
+                  "sinr": 9.57,
+                  "noise_var": 1.85,
+                  "rsrp": -10.02,
+                  "rssi": 16.19,
+                  "timing_advance": 0.97,
+                  "cfo_hz": 12.5,
+                  "harq_process_id": 0,
+                  "rv_index": 0,
+                  "new_data_indicator": 1,
+                  "cb_count": 1
+                }
+              ]
             }
           ]
         }
@@ -275,53 +282,62 @@
           "timestamp": 1642248646779012345,
           "sfn": 564,
           "slot": 7,
-          "cell_id": 51,
-          "n_bs_ants": 4,
-          "n_ue": 2,
-          "h_estimates": {
-            "shm_name": "/e3_ran_buffers",
-            "hest_buffer_index": 0,
-            "hest_write_index": 15,
-            "hest_row_byte_offset": 55872
-          },
-          "ue_metrics": [
+          "n_cells": 1,
+          "cells": [
             {
-              "rnti": 2831,
-              "n_layers": 1,
-              "layer_offset": 0,
-              "ue_grp_idx": 0,
-              "h_offset": 0,
-              "h_size": 720,
-              "n_subcarriers": 60,
-              "n_dmrs_estimates": 3,
-              "dmrs_symb_pos": 1057,
-              "rb_start": 0,
-              "rb_size": 5,
-              "start_symbol_index": 0,
-              "nr_of_symbols": 13,
-              "mcs_index": 20,
-              "sinr": 17.2,
-              "rsrp": -8.5,
-              "tb_crc_fail": 0
-            },
-            {
-              "rnti": 47668,
-              "n_layers": 1,
-              "layer_offset": 0,
-              "ue_grp_idx": 1,
-              "h_offset": 720,
-              "h_size": 720,
-              "n_subcarriers": 60,
-              "n_dmrs_estimates": 3,
-              "dmrs_symb_pos": 1057,
-              "rb_start": 5,
-              "rb_size": 5,
-              "start_symbol_index": 0,
-              "nr_of_symbols": 13,
-              "mcs_index": 20,
-              "sinr": 16.9,
-              "rsrp": -9.1,
-              "tb_crc_fail": 0
+              "cell_id": 51,
+              "n_bs_ants": 4,
+              "n_ue": 2,
+              "h_estimates": {
+                "shm_name": "/e3_ran_buffers",
+                "hest_buffer_index": 0,
+                "hest_write_index": 15,
+                "hest_row_byte_offset": 55872
+              },
+              "ues": [
+                {
+                  "rnti": 2831,
+                  "n_layers": 1,
+                  "layer_offset": 0,
+                  "ue_grp_idx": 0,
+                  "h_offset": 0,
+                  "h_size": 720,
+                  "n_subcarriers": 60,
+                  "n_dmrs_estimates": 3,
+                  "dmrs_symb_pos": 1057,
+                  "rb_start": 0,
+                  "rb_size": 5,
+                  "start_symbol_index": 0,
+                  "nr_of_symbols": 13,
+                  "mcs_index": 20,
+                  "pdu_len": 1544,
+                  "pdu_offset": 0,
+                  "sinr": 17.2,
+                  "rsrp": -8.5,
+                  "tb_crc_fail": 0
+                },
+                {
+                  "rnti": 47668,
+                  "n_layers": 1,
+                  "layer_offset": 0,
+                  "ue_grp_idx": 1,
+                  "h_offset": 720,
+                  "h_size": 720,
+                  "n_subcarriers": 60,
+                  "n_dmrs_estimates": 3,
+                  "dmrs_symb_pos": 1057,
+                  "rb_start": 5,
+                  "rb_size": 5,
+                  "start_symbol_index": 0,
+                  "nr_of_symbols": 13,
+                  "mcs_index": 20,
+                  "pdu_len": 1544,
+                  "pdu_offset": 1544,
+                  "sinr": 16.9,
+                  "rsrp": -9.1,
+                  "tb_crc_fail": 0
+                }
+              ]
             }
           ]
         }
@@ -340,40 +356,45 @@
           "timestamp": 1642248646878012345,
           "sfn": 520,
           "slot": 7,
-          "cell_id": 51,
-          "n_rx_ant_srs": 4,
-          "srs_cell_start_sym": 13,
-          "srs_cell_n_srs_sym": 1,
-          "n_srs_ue": 1,
-          "srs_iq_samples": {
-            "shm_name": "/e3_ran_buffers",
-            "srs_iq_buffer_index": 0,
-            "srs_iq_write_index": 3,
-            "srs_iq_row_byte_offset": 943488
-          },
-          "srs_hest": {
-            "shm_name": "/e3_ran_buffers",
-            "srs_hest_buffer_index": 0,
-            "srs_hest_write_index": 3
-          },
-          "srs_rb_snr": {
-            "shm_name": "/e3_ran_buffers",
-            "srs_rb_snr_buffer_index": 0,
-            "srs_rb_snr_write_index": 3
-          },
-          "ue_metrics": [
+          "n_cells": 1,
+          "cells": [
             {
-              "rnti": 2831,
-              "srs_wideband_snr": 19.2,
-              "srs_toa": 0.52,
-              "srs_ant_ports": 1,
-              "srs_n_valid_prg": 273,
-              "srs_prg_size": 1,
-              "srs_hest_n_prb_grps": 273,
-              "srs_hest_offset": 0,
-              "srs_hest_size": 4368,
-              "srs_rb_snr_offset": 0,
-              "srs_rb_snr_size": 1092
+              "cell_id": 51,
+              "n_rx_ant_srs": 4,
+              "srs_cell_start_sym": 13,
+              "srs_cell_n_srs_sym": 1,
+              "n_srs_ue": 1,
+              "srs_iq_samples": {
+                "shm_name": "/e3_ran_buffers",
+                "srs_iq_buffer_index": 0,
+                "srs_iq_write_index": 3,
+                "srs_iq_row_byte_offset": 943488
+              },
+              "srs_hest": {
+                "shm_name": "/e3_ran_buffers",
+                "srs_hest_buffer_index": 0,
+                "srs_hest_write_index": 3
+              },
+              "srs_rb_snr": {
+                "shm_name": "/e3_ran_buffers",
+                "srs_rb_snr_buffer_index": 0,
+                "srs_rb_snr_write_index": 3
+              },
+              "ues": [
+                {
+                  "rnti": 2831,
+                  "srs_wideband_snr": 19.2,
+                  "srs_toa": 0.52,
+                  "srs_ant_ports": 1,
+                  "srs_n_valid_prg": 273,
+                  "srs_prg_size": 1,
+                  "srs_hest_n_prb_grps": 273,
+                  "srs_hest_offset": 0,
+                  "srs_hest_size": 4368,
+                  "srs_rb_snr_offset": 0,
+                  "srs_rb_snr_size": 1092
+                }
+              ]
             }
           ],
           "_note": "Only key SRS per-UE fields shown. Full set includes srs_signal_energy, srs_noise_energy, srs_sc_corr, srs_comb_size, srs_freq_position, etc. See e3_message_schemas.json for all fields."
@@ -393,56 +414,150 @@
           "timestamp": 1642248646978012345,
           "sfn": 528,
           "slot": 7,
-          "cell_id": 51,
-          "n_rx_ant_srs": 4,
-          "srs_cell_start_sym": 13,
-          "srs_cell_n_srs_sym": 1,
-          "n_srs_ue": 2,
-          "srs_iq_samples": {
-            "shm_name": "/e3_ran_buffers",
-            "srs_iq_buffer_index": 1,
-            "srs_iq_write_index": 5,
-            "srs_iq_row_byte_offset": 1572480
-          },
-          "srs_hest": {
-            "shm_name": "/e3_ran_buffers",
-            "srs_hest_buffer_index": 1,
-            "srs_hest_write_index": 5
-          },
-          "srs_rb_snr": {
-            "shm_name": "/e3_ran_buffers",
-            "srs_rb_snr_buffer_index": 1,
-            "srs_rb_snr_write_index": 5
-          },
-          "ue_metrics": [
+          "n_cells": 1,
+          "cells": [
             {
-              "rnti": 2831,
-              "srs_wideband_snr": 19.2,
-              "srs_toa": 0.52,
-              "srs_ant_ports": 2,
-              "srs_n_valid_prg": 273,
-              "srs_prg_size": 1,
-              "srs_hest_n_prb_grps": 273,
-              "srs_hest_offset": 0,
-              "srs_hest_size": 8736,
-              "srs_rb_snr_offset": 0,
-              "srs_rb_snr_size": 1092
-            },
-            {
-              "rnti": 47668,
-              "srs_wideband_snr": 21.7,
-              "srs_toa": 0.48,
-              "srs_ant_ports": 1,
-              "srs_n_valid_prg": 273,
-              "srs_prg_size": 1,
-              "srs_hest_n_prb_grps": 273,
-              "srs_hest_offset": 8736,
-              "srs_hest_size": 4368,
-              "srs_rb_snr_offset": 1092,
-              "srs_rb_snr_size": 1092
+              "cell_id": 51,
+              "n_rx_ant_srs": 4,
+              "srs_cell_start_sym": 13,
+              "srs_cell_n_srs_sym": 1,
+              "n_srs_ue": 2,
+              "srs_iq_samples": {
+                "shm_name": "/e3_ran_buffers",
+                "srs_iq_buffer_index": 1,
+                "srs_iq_write_index": 5,
+                "srs_iq_row_byte_offset": 1572480
+              },
+              "srs_hest": {
+                "shm_name": "/e3_ran_buffers",
+                "srs_hest_buffer_index": 1,
+                "srs_hest_write_index": 5
+              },
+              "srs_rb_snr": {
+                "shm_name": "/e3_ran_buffers",
+                "srs_rb_snr_buffer_index": 1,
+                "srs_rb_snr_write_index": 5
+              },
+              "ues": [
+                {
+                  "rnti": 2831,
+                  "srs_wideband_snr": 19.2,
+                  "srs_toa": 0.52,
+                  "srs_ant_ports": 2,
+                  "srs_n_valid_prg": 273,
+                  "srs_prg_size": 1,
+                  "srs_hest_n_prb_grps": 273,
+                  "srs_hest_offset": 0,
+                  "srs_hest_size": 8736,
+                  "srs_rb_snr_offset": 0,
+                  "srs_rb_snr_size": 1092
+                },
+                {
+                  "rnti": 47668,
+                  "srs_wideband_snr": 21.7,
+                  "srs_toa": 0.48,
+                  "srs_ant_ports": 1,
+                  "srs_n_valid_prg": 273,
+                  "srs_prg_size": 1,
+                  "srs_hest_n_prb_grps": 273,
+                  "srs_hest_offset": 8736,
+                  "srs_hest_size": 4368,
+                  "srs_rb_snr_offset": 1092,
+                  "srs_rb_snr_size": 1092
+                }
+              ]
             }
           ]
         }
+      }
+    },
+
+    "indicationMessage_multi_cell": {
+      "description": "Multi-cell PUSCH indication for a single slot. n_cells=2; cells[] holds one entry per active cell, each with its own SHM references and ues[]. Single-cell apps read cells[0]; multi-cell apps iterate cells[].",
+      "message": {
+        "type": "indicationMessage",
+        "id": 500,
+        "dAppIdentifier": 1,
+        "ranFunctionIdentifier": 2,
+        "subscriptionId": 1,
+        "protocolData": {
+          "timestamp": 1642248647078012345,
+          "timestamp_tai": 1642248647115000000,
+          "sfn": 600,
+          "slot": 9,
+          "n_cells": 2,
+          "cells": [
+            {
+              "cell_id": 51,
+              "n_bs_ants": 4,
+              "n_ue": 1,
+              "iq_samples": {
+                "shm_name": "/e3_ran_buffers",
+                "fh_buffer_index": 0,
+                "fh_write_index": 90
+              },
+              "h_estimates": {
+                "shm_name": "/e3_ran_buffers",
+                "hest_buffer_index": 0,
+                "hest_write_index": 90,
+                "hest_row_byte_offset": 0
+              },
+              "ues": [
+                {
+                  "rnti": 2831,
+                  "ue_grp_idx": 0,
+                  "h_offset": 0,
+                  "h_size": 1152,
+                  "rb_start": 0,
+                  "rb_size": 8,
+                  "mcs_index": 15,
+                  "tb_size": 1544,
+                  "pdu_len": 1544,
+                  "pdu_offset": 0,
+                  "sinr": 9.6,
+                  "tb_crc_fail": 0
+                }
+              ]
+            },
+            {
+              "cell_id": 52,
+              "n_bs_ants": 4,
+              "n_ue": 1,
+              "iq_samples": {
+                "shm_name": "/e3_ran_buffers",
+                "fh_buffer_index": 0,
+                "fh_write_index": 91
+              },
+              "h_estimates": {
+                "shm_name": "/e3_ran_buffers",
+                "hest_buffer_index": 0,
+                "hest_write_index": 91,
+                "hest_row_byte_offset": 9216
+              },
+              "ues": [
+                {
+                  "rnti": 4127,
+                  "ue_grp_idx": 0,
+                  "h_offset": 0,
+                  "h_size": 1440,
+                  "rb_start": 0,
+                  "rb_size": 10,
+                  "mcs_index": 18,
+                  "tb_size": 2216,
+                  "pdu_len": 2216,
+                  "pdu_offset": 0,
+                  "sinr": 12.3,
+                  "tb_crc_fail": 0
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "notes": {
+        "n_cells": "cells[].length equals n_cells for the slot.",
+        "shm_indexing": "Each cell carries independent buffer/write indices and hest_row_byte_offset; per-UE H and PDU are sliced within the owning cell's blob via h_offset/h_size and pdu_offset/pdu_len.",
+        "reader": "Single-cell dApps (prb-power-*) consume cells[0]; the sanity dApp iterates all cells[]."
       }
     },
 

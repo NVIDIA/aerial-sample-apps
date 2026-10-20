@@ -50,10 +50,16 @@ static void ProcessPRBPower(const e3::IndicationContext& ctx) {
             return;
         }
 
+        // Single-cell app: operate on cells[0]; slot scalars stay at root.
+        if (!indication_payload.contains("cells") || indication_payload["cells"].empty()) {
+            return;
+        }
+        const json& cell = indication_payload["cells"][0];
+
         // 2. Validate that all required model inputs are available
         std::vector<std::string> missing_inputs;
         for (const auto& model_input : metadata->inputs) {
-            if (!indication_payload.contains(model_input.name)) {
+            if (!cell.contains(model_input.name)) {
                 missing_inputs.push_back(model_input.name);
             }
         }
@@ -77,7 +83,7 @@ static void ProcessPRBPower(const e3::IndicationContext& ctx) {
         // 3. Prepare inputs for inference
         std::vector<e3::TensorInput> inference_inputs;
         for (const auto& model_input : metadata->inputs) {
-            const auto& payload_data = indication_payload[model_input.name];
+            const auto& payload_data = cell[model_input.name];
             e3::TensorInput input;
             input.name = model_input.name;
             input.datatype = model_input.type;
@@ -91,6 +97,7 @@ static void ProcessPRBPower(const e3::IndicationContext& ctx) {
             
             // Check if this is a shared memory block
             if (payload_data.is_object()) {
+                // prb-power consumes only iq_samples; PUSCH/H-estimate branches below are reference examples.
                 if (payload_data.contains("fh_buffer_index")) {
                     // IQ samples from shared memory
                     SharedMemoryHeader* header = static_cast<SharedMemoryHeader*>(ran_shm_ptr);
@@ -122,10 +129,10 @@ static void ProcessPRBPower(const e3::IndicationContext& ctx) {
                     uint8_t hest_buf_idx = payload_data.value("hest_buffer_index", 0u);
                     uint32_t hest_row_byte_off = payload_data.value("hest_row_byte_offset", 0u);
 
-                    // Total H-est size: max(h_offset + h_size) across ue_metrics[]
+                    // Total H-est size: max(h_offset + h_size) across ues[]
                     uint32_t total_h_size = 0;
-                    if (indication_payload.contains("ue_metrics")) {
-                        for (const auto& ue : indication_payload["ue_metrics"]) {
+                    if (cell.contains("ues")) {
+                        for (const auto& ue : cell["ues"]) {
                             uint32_t end = ue.value("h_offset", 0u) + ue.value("h_size", 0u);
                             if (end > total_h_size) total_h_size = end;
                         }
@@ -287,7 +294,7 @@ struct AppConfig {
     std::vector<E3Manager::E3AgentConfig> agents;
     std::string bind_addr = "tcp://*:5558";
     std::string dapp_name = "PRB Power";
-    std::string dapp_version = "1.1.0";
+    std::string dapp_version = "1.2.0";
     std::string vendor = "NVIDIA";
     std::string model_name = "prb_power_numpy";
     uint32_t subscription_response_timeout_s = 10;
