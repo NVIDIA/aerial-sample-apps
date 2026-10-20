@@ -48,32 +48,33 @@ CACHE_DIR = "/tmp/prb_power_models"
 ONNX_PATH = os.path.join(CACHE_DIR, "prb_power.onnx")
 
 
-class _PowerCalculator(nn.Module):
-    """Torch module for ONNX export: I^2 + Q^2, mean over antennas/symbols/subcarriers."""
+if TORCH_AVAILABLE:
+    class _PowerCalculator(nn.Module):
+        """Torch module for ONNX export: I^2 + Q^2, mean over antennas/symbols/subcarriers."""
 
-    def forward(self, x: "torch.Tensor") -> "torch.Tensor":
-        fp32 = x.float()
-        power = torch.square(fp32[..., 0]) + torch.square(fp32[..., 1])
-        return power.mean(dim=(0, 1, 3))
+        def forward(self, x: "torch.Tensor") -> "torch.Tensor":
+            fp32 = x.float()
+            power = torch.square(fp32[..., 0]) + torch.square(fp32[..., 1])
+            return power.mean(dim=(0, 1, 3))
 
 
-def _export_onnx():
-    """Export the PRB power model to ONNX format."""
-    os.makedirs(CACHE_DIR, exist_ok=True)
-    model = _PowerCalculator().eval()
-    dummy = torch.randn(4, 14, 273, 12, 2, dtype=torch.float16)
-    if torch.cuda.is_available():
-        model = model.cuda()
-        dummy = dummy.cuda()
-    torch.onnx.export(
-        model, dummy, ONNX_PATH,
-        export_params=True,
-        opset_version=18,
-        do_constant_folding=True,
-        input_names=["iq_samples"],
-        output_names=["prb_power"],
-    )
-    print(f"prb_power_onnx: exported ONNX model to {ONNX_PATH}")
+    def _export_onnx():
+        """Export the PRB power model to ONNX format."""
+        os.makedirs(CACHE_DIR, exist_ok=True)
+        model = _PowerCalculator().eval()
+        dummy = torch.randn(4, 14, 273, 12, 2, dtype=torch.float16)
+        if torch.cuda.is_available():
+            model = model.cuda()
+            dummy = dummy.cuda()
+        torch.onnx.export(
+            model, dummy, ONNX_PATH,
+            export_params=True,
+            opset_version=18,
+            do_constant_folding=True,
+            input_names=["iq_samples"],
+            output_names=["prb_power"],
+        )
+        print(f"prb_power_onnx: exported ONNX model to {ONNX_PATH}")
 
 
 class InferenceModel:
