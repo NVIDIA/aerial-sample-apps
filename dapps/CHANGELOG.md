@@ -13,7 +13,7 @@ the release notes for [Aerial CUDA-Accelerated RAN][acar] and [Aerial Testbed][a
 Validated with:
 
 - Aerial CUDA-Accelerated RAN 26-2
-- Aerial Testbed 1.2
+- Aerial Testbed
 
 ### New Features
 
