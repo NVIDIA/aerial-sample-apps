@@ -384,7 +384,7 @@ void SaveChannelEstimatesCSV(
         csv_file << "# n_bs_ants=" << (int)n_bs_ants << ", n_layers=" << (int)n_layers
                  << ", layer_offset=" << layer_offset << ", n_layers_group=" << n_layers_group
                  << ", n_subcarriers=" << n_subcarriers << ", n_dmrs_estimates=" << (int)n_dmrs_estimates << std::endl;
-        csv_file << "# Layout: [dmrs][subcarrier][antenna][layer] row-major. Showing first UE layer, dmrs=0." << std::endl;
+        csv_file << "# Layout: [dmrs][subcarrier][layer][antenna] row-major. Showing first UE layer, dmrs=0." << std::endl;
 
         csv_file << "subcarrier";
         for (int ant = 0; ant < n_bs_ants; ++ant) {
@@ -392,11 +392,11 @@ void SaveChannelEstimatesCSV(
         }
         csv_file << std::endl;
 
-        // Index: (dmrs * n_subcarriers * n_bs_ants * n_layers_group) + (sc * n_bs_ants * n_layers_group) + (ant * n_layers_group) + layer_offset
+        // Index: (dmrs * n_subcarriers * n_layers_group * n_bs_ants) + (sc * n_layers_group * n_bs_ants) + (layer_offset * n_bs_ants) + ant
         for (int sc = 0; sc < n_subcarriers; ++sc) {
             csv_file << sc;
             for (int ant = 0; ant < n_bs_ants; ++ant) {
-                uint32_t idx = (sc * n_bs_ants * n_layers_group) + (ant * n_layers_group) + layer_offset;
+                uint32_t idx = (sc * n_layers_group * n_bs_ants) + (layer_offset * n_bs_ants) + ant;
                 float magnitude = (idx < h_size) ? std::abs(grp_ptr[idx]) : 0.0f;
                 csv_file << "," << std::fixed << std::setprecision(6) << magnitude;
             }

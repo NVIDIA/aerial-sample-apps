@@ -1,0 +1,112 @@
+#
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+# http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+# Aerial image: copies aerial-cuda-accelerated-ran into the NVIDIA Aerial
+# base and compiles the SDK with build_aerial_sdk.sh (preset 10_04, conformance off).
+# nvIPC for the L2 gNB is also built into the ocudu/gnb prod image from vendored
+# gt_common_libs. For a host-synced nvIPC tree in dev, use copy_nvipc_to_out.sh in aerial_dev.
+#
+# build_aerial_sdk.sh refuses to run unless /.dockerenv exists; that file is created
+# at container runtime but not during `docker build` RUN, so we touch it here.
+#
+# Any edit under aerial-cuda-accelerated-ran invalidates the SDK COPY, so the compile
+# below always re-runs. The BuildKit cache mount keeps ccache across image builds so
+# those re-runs hit the cache instead of compiling all of L1 again. Needs BuildKit
+# (DOCKER_BUILDKIT=1; the default for buildx and compose) - without it the mount is
+# ignored and every build is cold. Build with --progress=plain to see the hit rate.
+#
+# Build from repo root (large, long compile). Compose: docker/docker-compose.yml
+#
+
+ARG AERIAL_DEV_VERSION=26-2
+ARG AERIAL_IMAGE=nvcr.io/nvidia/aerial/aerial-cuda-accelerated-ran:26-2-cubb
+
+FROM ${AERIAL_IMAGE}
+
+ARG AERIAL_DEV_VERSION=26-2
+# cuPHY objects for every CUDA arch are bulky: the 5G ccache default evicts most of a
+# single build, which then looks the same as having no cache at all.
+ARG CCACHE_MAXSIZE=40G
+
+ENV cuBB_SDK=/opt/nvidia/cuBB
+
+USER root
+
+# Independent of the SDK sources, so it stays above the COPY and survives source edits.
+# docker build has no host GPU driver; cuMAC CUDA device link still needs libcuda.so in the
+# Debian multilib dir (see run_aerial.sh no-GPU path and cuPHY-CP/container/build_doca.sh).
+# libcuda.so.1 has to exist under its SONAME too, not just the linker name: the cuPHY build
+# runs genLUT and genPucchLUT to generate headers, and those link libaerial_utils.so, so the
+# loader resolves libcuda.so.1 before they can emit anything. build_doca.sh points that
+# SONAME at the stub on aarch64 for the same reason.
+RUN set -eu; \
+    arch_lib="/usr/lib/$(uname -m)-linux-gnu"; \
+    mkdir -p "${arch_lib}"; \
+    soname="${arch_lib}/libcuda.so.1"; \
+    if [ ! -e "${soname}" ]; then \
+      for d in /usr/local/cuda/lib64/stubs \
+               /usr/local/cuda/targets/sbsa-linux/lib/stubs \
+               /usr/local/cuda/targets/aarch64-linux/lib/stubs; do \
+        if [ -f "${d}/libcuda.so" ]; then ln -sf "${d}/libcuda.so" "${soname}"; break; fi; \
+      done; \
+    fi; \
+    if [ ! -e "${soname}" ] && [ -f /usr/local/cuda/compat/libcuda.so.1 ]; then \
+      ln -sf /usr/local/cuda/compat/libcuda.so.1 "${soname}"; \
+    fi; \
+    if [ ! -e "${soname}" ]; then \
+      echo "ERROR: no CUDA stub or compat libcuda for device link" >&2; \
+      find /usr/local/cuda -maxdepth 5 -name 'libcuda.so*' 2>/dev/null || true; \
+      exit 1; \
+    fi; \
+    [ -e "${arch_lib}/libcuda.so" ] || ln -sf libcuda.so.1 "${arch_lib}/libcuda.so"; \
+    ldconfig
+
+# Copy Aerial SDK source
+COPY aerial-cuda-accelerated-ran /opt/nvidia/cuBB
+
+RUN mkdir -p /nvipc_out /opt/nvidia/cuBB/build_output
+
+WORKDIR /opt/nvidia/cuBB
+
+# Same invocation as documented for manual container builds (FAPI 10_04, conformance TM off).
+# ENABLE_CPPCHECK is ON by default in Rel-26-2 and its find_program is REQUIRED, but no target
+# consumes the checker command (the nvphy_fapi_tasks opt-in is commented out), so configuring
+# with it off keeps bases without cppcheck usable and loses no analysis.
+# ENABLE_PYAERIAL is also ON by default and forces ENABLE_GPU3GPPCHAN_PYTHON, whose configure
+# step aborts unless an interpreter can import nanobind. The devel base ships no nanobind, and
+# cuphycontroller_scf does not need either wheel, so both are off.
+# ccache variables mirror ocudu/docker/scripts/builder.sh. The extra sloppiness is needed
+# because COPY stamps a fresh ctime on every source and header, which ccache otherwise
+# treats as too new to serve from or store in the cache.
+# The CMake build tree deliberately stays in the image layer rather than in a cache mount:
+# run_l1.sh resolves the binary from $cuBB_SDK/build.$(uname -m) at runtime.
+RUN --mount=type=cache,target=/ccache \
+    set -eu; \
+    export CCACHE_DIR=/ccache \
+           CCACHE_BASEDIR=/opt/nvidia/cuBB \
+           CCACHE_COMPILERCHECK=content \
+           CCACHE_MAXSIZE="${CCACHE_MAXSIZE:-40G}" \
+           CCACHE_SLOPPINESS=include_file_ctime,include_file_mtime; \
+    ccache -z || true; \
+    touch /.dockerenv; \
+    chmod +x testBenches/phase4_test_scripts/build_aerial_sdk.sh; \
+    ./testBenches/phase4_test_scripts/build_aerial_sdk.sh --preset 10_04 --targets cuphycontroller_scf -- -DENABLE_CONFORMANCE_TM_PDSCH_PDCCH=OFF -DENABLE_CPPCHECK=OFF -DENABLE_PYAERIAL=OFF -DENABLE_GPU3GPPCHAN_PYTHON=OFF; \
+    ccache -sv || true
+
+# After the compile, so editing a helper script does not trigger an L1 rebuild.
+COPY scripts /nvipc_scripts
+
+LABEL aerial.dev.version="${AERIAL_DEV_VERSION}"

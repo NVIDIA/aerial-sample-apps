@@ -23,10 +23,14 @@
 
 cmake_minimum_required(VERSION 3.18)
 project(aerial_dapps
-    VERSION 1.2.0
+    VERSION 1.2.1
     DESCRIPTION "NVIDIA Aerial dApp Applications"
     LANGUAGES CXX
 )
+
+if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
+    set(CMAKE_BUILD_TYPE Release CACHE STRING "Build type" FORCE)
+endif()
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)

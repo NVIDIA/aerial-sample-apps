@@ -25,8 +25,8 @@
 #include <fstream>
 #include <vector>
 #include <chrono>
-#include <complex>
 #include <cstring>
+#include <algorithm>
 #include <signal.h>
 #include <atomic>
 
@@ -97,7 +97,7 @@ static void ProcessPRBPower(const e3::IndicationContext& ctx) {
             
             // Check if this is a shared memory block
             if (payload_data.is_object()) {
-                // prb-power consumes only iq_samples; PUSCH/H-estimate branches below are reference examples.
+                // prb-power consumes only iq_samples; for addressing the other SHM streams see docs/data_representation.md.
                 if (payload_data.contains("fh_buffer_index")) {
                     // IQ samples from shared memory
                     SharedMemoryHeader* header = static_cast<SharedMemoryHeader*>(ran_shm_ptr);
@@ -112,39 +112,6 @@ static void ProcessPRBPower(const e3::IndicationContext& ctx) {
                     
                     // Zero-copy: reference shared memory directly
                     input.data = e3::ShmInfo{total_offset, header->num_fh_samples * sizeof(int16_t)};
-                    
-                } else if (payload_data.contains("pusch_buffer_index")) {
-                    // PUSCH data from shared memory
-                    SharedMemoryHeader* header = static_cast<SharedMemoryHeader*>(ran_shm_ptr);
-                    uint8_t pusch_buf_idx = payload_data.value("pusch_buffer_index", 0u);
-                    uint32_t pusch_write_idx = payload_data.value("pusch_write_index", 0u);
-                    
-                    size_t pusch_base_offset = sizeof(SharedMemoryHeader) + (2 * header->fh_buffer_size);
-                    size_t pusch_buffer_offset = pusch_buf_idx * header->pusch_buffer_size;
-                    input.data = e3::ShmInfo{pusch_base_offset + pusch_buffer_offset, (size_t)pusch_write_idx};
-                    
-                } else if (payload_data.contains("hest_buffer_index")) {
-                    // Channel estimates (H) from shared memory (all UE groups concatenated)
-                    SharedMemoryHeader* header = static_cast<SharedMemoryHeader*>(ran_shm_ptr);
-                    uint8_t hest_buf_idx = payload_data.value("hest_buffer_index", 0u);
-                    uint32_t hest_row_byte_off = payload_data.value("hest_row_byte_offset", 0u);
-
-                    // Total H-est size: max(h_offset + h_size) across ues[]
-                    uint32_t total_h_size = 0;
-                    if (cell.contains("ues")) {
-                        for (const auto& ue : cell["ues"]) {
-                            uint32_t end = ue.value("h_offset", 0u) + ue.value("h_size", 0u);
-                            if (end > total_h_size) total_h_size = end;
-                        }
-                    }
-                    if (total_h_size == 0) return;
-
-                    size_t base_offset = sizeof(SharedMemoryHeader);
-                    size_t hest_base_offset = base_offset + (2 * header->fh_buffer_size) + (2 * header->pusch_buffer_size);
-                    size_t hest_buffer_offset = hest_buf_idx * header->hest_buffer_size;
-                    size_t final_offset = hest_base_offset + hest_buffer_offset + hest_row_byte_off;
-
-                    input.data = e3::ShmInfo{final_offset, total_h_size * sizeof(std::complex<float>)};
                 } else {
                     std::cerr << "Warning: Unknown shared memory type for '" << model_input.name << "'. Skipping." << std::endl;
                     continue;
@@ -225,8 +192,9 @@ static void ProcessPRBPower(const e3::IndicationContext& ctx) {
                     uint16_t sfn = indication_payload.value("sfn", 0u);
                     uint16_t slot = indication_payload.value("slot", 0u);
                     
-                    // Calculate number of PRBs from data size (FP32 = 4 bytes per PRB)
+                    // Calculate number of PRBs from data size (FP32 = 4 bytes per PRB), trimmed to the carrier
                     size_t num_prbs = prb_output->data.size() / sizeof(float);
+                    num_prbs = std::min(num_prbs, cell.value("n_prb_ul_bwp", num_prbs));
                     
                     // ZMQ multipart message: metadata | prb_power | timing
                     char metadata_str[64];
@@ -237,7 +205,7 @@ static void ProcessPRBPower(const e3::IndicationContext& ctx) {
                     results_publisher->send(meta_msg, zmq::send_flags::sndmore);
                     
                     // Part 2: PRB power data (raw FP32 bytes)
-                    zmq::message_t prb_msg(prb_output->data.data(), prb_output->data.size());
+                    zmq::message_t prb_msg(prb_output->data.data(), num_prbs * sizeof(float));
                     results_publisher->send(prb_msg, zmq::send_flags::sndmore);
                     
                     // Part 3: timing data [client_time_us, model_time_us]
@@ -294,7 +262,7 @@ struct AppConfig {
     std::vector<E3Manager::E3AgentConfig> agents;
     std::string bind_addr = "tcp://*:5558";
     std::string dapp_name = "PRB Power";
-    std::string dapp_version = "1.2.0";
+    std::string dapp_version = "1.2.1";
     std::string vendor = "NVIDIA";
     std::string model_name = "prb_power_numpy";
     uint32_t subscription_response_timeout_s = 10;

@@ -20,6 +20,14 @@ New features, changes, fixes, and limitations of each release are listed in [CHA
 
 ## Architecture
 
+<div align="center">
+  <img src="docs/high-level-dapp-diagram.png" alt="dApp framework in the NVIDIA Aerial gNB" width="1000"><br>
+  <em>dApp framework in the NVIDIA Aerial gNB</em>
+</div>
+<br>
+
+The E3 Agent in the gNB exposes real-time RAN data to the dApps over the E3 interface and shared memory, so each dApp can process the data, run inference, and send control back to the RAN.
+
 The system consists of three main components:
 
 - **E3 Manager** (`common/e3_manager/`): Core engine handling E3AP protocol, multi-agent communication, shared memory, and application dispatch. The inference engine is pluggable via the `InferenceEngine` abstract interface (e.g., embedded Python, Triton C API, Triton gRPC).
@@ -28,16 +36,9 @@ The system consists of three main components:
 
 - **dApp Logic** (`applications/`): Self-contained dApp combining an inference engine with application-specific processing logic (e.g., PRB power calculation). Each app has its own config, Dockerfile, models, and build system. See the [applications README](applications/) for available dApps and performance benchmarks.
 
-### Architecture Diagrams
-
 <div align="center">
-  <img src="docs/high-level-dapp-diagram.png" alt="High-level dApp Architecture" width="1000"><br>
-  <em>High-level dApp architecture</em>
-</div>
-<br>
-<div align="center">
-  <img src="docs/dapp-implementation.png" alt="dApp reference implementation" width="500"><br>
-  <em>dApp reference implementation</em>
+  <img src="docs/dapp-implementation.png" alt="dApp container reference architecture" width="600"><br>
+  <em>dApp container reference architecture</em>
 </div>
 
 ## Available Data Streams
@@ -47,12 +48,12 @@ The E3 Agent exposes the following uplink data streams through the NVIDIA KPM Se
 | Category | Data | Description |
 |----------|------|-------------|
 | IQ & Channel | IQ samples, DMRS estimates, PUSCH data | Raw fronthaul IQ, DMRS channel estimates, decoded PUSCH (shared memory) |
-| Frame info | SFN, Slot, Timestamp | System Frame Number, slot index, agent-side nanosecond timestamp |
-| Cell & Antenna | Cell ID, RX antennas, BS antennas, Cells | Physical cell ID, antenna counts |
-| Channel quality | RSRP, RSSI, SINR, noise variance, MCS index, QAM order | PHY-layer measurements and modulation parameters |
-| PUSCH | TB CRC fail, CB errors, CB count | Transport/code block error indicators |
+| Frame info | SFN, Slot, Timestamp, TAI timestamp | System Frame Number, slot index, software and TAI-aligned nanosecond timestamps |
+| Cell & Antenna | Cell ID, RX antennas, BS antennas, Cells, UL BWP size | Physical cell ID, antenna counts, PRBs carrying data |
+| Channel quality | RSRP, RSSI, SINR, noise variance, timing advance, CFO, MCS index, QAM order | PHY-layer measurements and modulation parameters |
+| PUSCH | TB CRC fail, CB errors, CB count, TB size, HARQ process, RV, NDI | Transport/code block error indicators and HARQ state |
 | Resource allocation | RB start, RB size, Symbols, Subcarriers, MIMO layers | Frequency/time resource assignment |
-| SRS | SRS IQ, SRS channel estimates, per-RB SNR, SRS data | Uplink SRS samples, per-UE channel estimates, and per-band SNR |
+| SRS | SRS IQ, SRS channel estimates, per-PRB-group and wideband SNR, ToA, SRS configuration | Uplink SRS samples, per-UE channel estimates, signal quality, and resource configuration |
 
 This list reflects the currently supported telemetry streams. Additional data streams and service models may be added in future releases. See `docs/application_development_guide.md` for the full per-field telemetry ID table and shared memory layout details.
 
@@ -86,10 +87,10 @@ From another terminal, run the end-to-end test to subscribe to telemetry streams
 ```bash
 docker exec -it dapp-prb-power-triton \
     /opt/src/common/client/e3_e2e_test.py \
-    -a NVIDIA_L1 -m prb_power_numpy -t 1,4,5,6 -d 10
+    -a NVIDIA_L1 -m prb_power_numpy -t 1,4,5,6,80 -d 10
 ```
 
-This subscribes to IQ samples (1), SFN (5), slot (6), and timestamp (4) from agent `NVIDIA_L1`, waits 10 seconds while the dApp runs inference, then unsubscribes and verifies cleanup.
+This subscribes to IQ samples (1), timestamp (4), SFN (5), slot (6), and n_prb_ul_bwp (80) from agent `NVIDIA_L1`, waits 10 seconds while the dApp runs inference, then unsubscribes and verifies cleanup.
 
 Expected output:
 
@@ -97,7 +98,7 @@ Expected output:
   ✓ Agent listing PASSED
   ✓ Initial status check PASSED
   ✓ Subscription request sent
-  [PRB Power Triton] SFN/Slot: 123/4 Inference successful. Latency: 1197us
+  [PRB Power Triton] [prb_power_numpy] SFN/Slot: 123/4 Inference successful. Latency: 1197us
   ✓ Subscription delete request sent
   ✓ Status shows no agent is subscribed
   --- Test Complete ---
@@ -108,7 +109,7 @@ Use `-i` for interactive mode (press Enter to advance each step). Run with `--he
 | Option | Default | Description |
 |--------|---------|-------------|
 | `-a, --agent` | (required) | E3 Agent name (e.g., `NVIDIA_L1`) |
-| `-m, --model` | `prb_power_numpy` | Inference model name |
+| `-m, --model` | dApp default | Inference model name |
 | `-t, --telemetry-ids` | `1,4,5,6` | Comma-separated telemetry IDs |
 | `-r, --ran-function-id` | `2` | RAN Function Identifier |
 | `-p, --periodicity` | `100000` | Indication interval in microseconds |
@@ -127,15 +128,19 @@ Technical documentation is available in `docs/`:
 - **[e3_message_examples.json](docs/e3_message_examples.json)**: Example messages and client commands
 - **[data_representation.md](docs/data_representation.md)**: Shared memory data layout for PUSCH and SRS data streams (e.g., IQ and H estimates)
 
+## Contributing
+
+This project is currently not accepting contributions. See [CONTRIBUTING.md](CONTRIBUTING.md).
+
 ## License and Citation
 
-This project is licensed under the Apache 2.0 license. See the LICENSE file for details.
+This project is licensed under the Apache 2.0 license. See [LICENSE](LICENSE) for details.
 
 If you use this software in your research, please cite:
 
 ```bibtex
 @article{nvidia2026dapps,
-    title = {{Programmable and GPU-Accelerated Edge Inference for Real-Time ISAC on NVIDIA Aerial Testbed}},
+    title = {{Programmable GPU-Accelerated dApps for Real-Time Edge Inference and ISAC on NVIDIA Aerial Testbed}},
     author = {Villa, Davide and Belgiovine, Mauro and Hedberg, Nicholas and Polese, Michele and Dick, Chris and Melodia, Tommaso},
     journal = {arXiv:2512.06493 [cs.NI]},
     year = {2026}
@@ -144,7 +149,7 @@ If you use this software in your research, please cite:
 
 ## References
 
-[1] **NVIDIA dApp Framework:** D. Villa, M. Belgiovine, N. Hedberg, M. Polese, C. Dick, and T. Melodia, "Programmable and GPU-Accelerated Edge Inference for Real-Time ISAC on NVIDIA Aerial Testbed," arXiv:2512.06493 \[cs.NI\], 2026. [arXiv PDF](https://arxiv.org/pdf/2512.06493)
+[1] **NVIDIA dApp Framework:** D. Villa, M. Belgiovine, N. Hedberg, M. Polese, C. Dick, and T. Melodia, "Programmable GPU-Accelerated dApps for Real-Time Edge Inference and ISAC on NVIDIA Aerial Testbed," arXiv:2512.06493 \[cs.NI\], 2026. [arXiv PDF](https://arxiv.org/pdf/2512.06493)
 
 [2] **dApps Concept:** S. D'Oro, M. Polese, L. Bonati, H. Cheng, and T. Melodia, "dApps: Distributed Applications for Real-time Inference and Control in O-RAN," *IEEE Communications Magazine*, 2022. [arXiv PDF](https://arxiv.org/pdf/2203.02370.pdf)
 

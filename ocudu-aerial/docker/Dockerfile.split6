@@ -1,0 +1,166 @@
+#
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+# http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+# Split-6–only image: builds only the gnb_split_6 target (no ocu, odu, ru,
+# or other splits). Uses ROHC only; UHD and DPDK are disabled for a smaller,
+# faster build.
+#
+# gdb is always installed so you can capture backtraces. For symbol resolution
+# (file:line in backtraces), build with: --build-arg DEBUG_BUILD=1
+# (uses RelWithDebInfo). Then run e.g. gdb -ex run -ex "bt full" -args /usr/local/bin/gnb_split_6 -c /gnb_config.yml
+#
+# Lives in ocudu-aerial docker/. Build context is repo root (.. from docker/)
+# so we can COPY the ocudu submodule (including its nested plugins/aerial
+# submodule) and nvIPC sources from aerial-cuda-accelerated-ran.
+#
+# Also builds libnvipc.so: full aerial-cuda-accelerated-ran tree at /aerial (cuBB_SDK), then
+# pack_nvipc.sh in-image (git-clones external/* into TEMP_SRC_DIR), then CMake -S /tmp/nvipc_pack.
+# That tree stays in the builder stage for clarity; the final runtime image only copies /opt/ocudu.
+#
+# No host patches and no ./plugin overlay: the ocudu submodule pins the Aerial
+# split-6 plugin. The build installs the Aerial SCF FAPI header into OCUDU.
+#
+
+ARG OS_VERSION=24.04
+ARG MARCH=native
+ARG NUM_JOBS=""
+ARG DEBUG_BUILD=0
+ARG ROHC_VERSION=2.3.1
+
+##################
+# Stage 1: Build #
+##################
+
+FROM ubuntu:$OS_VERSION AS builder-base
+
+# Whole directory: install_*.sh source the shared common.sh from their own directory.
+COPY ocudu/docker/scripts/ /src/docker/scripts/
+COPY docker/check_cpu_crypto.sh /src/docker/scripts/check_cpu_crypto.sh
+
+RUN /src/docker/scripts/install_dependencies.sh build && \
+    /src/docker/scripts/install_rohc_dependencies.sh build && \
+    DEBIAN_FRONTEND=noninteractive apt-get update && \
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends git clang ccache ca-certificates
+
+
+
+FROM builder-base AS builder-rohc
+
+ARG MARCH
+ARG NUM_JOBS
+ARG ROHC_VERSION
+
+RUN /src/docker/scripts/install_rohc_dependencies.sh build
+RUN EFFECTIVE_MARCH="${MARCH:-native}"; \
+    EFFECTIVE_MARCH="$(bash /src/docker/scripts/check_cpu_crypto.sh "${MARCH}")"; \
+    echo "Using MARCH=${EFFECTIVE_MARCH} for ROHC build" && \
+    /src/docker/scripts/build_rohc.sh "${ROHC_VERSION}" "${EFFECTIVE_MARCH}" ${NUM_JOBS}
+
+
+#############################
+# Stage 2: Runtime base     #
+#############################
+
+FROM ubuntu:$OS_VERSION AS runtime-base
+
+COPY ocudu/docker/scripts/ /usr/local/etc/
+RUN ln -sf /usr/local/etc/install_dependencies.sh /usr/local/etc/install_ocudu_dependencies.sh
+
+RUN /usr/local/etc/install_ocudu_dependencies.sh run && \
+    /usr/local/etc/install_rohc_dependencies.sh run && \
+    DEBIAN_FRONTEND=noninteractive apt-get update && apt-get install -y --no-install-recommends curl ntpdate python3 iproute2 gdb gettext-base && \
+    apt-get autoremove -y && apt-get clean && rm -rf /var/lib/apt/lists/*
+
+#############################
+# Stage 3: OCUDU build      #
+# (Only gnb_split_6 target) #
+#############################
+
+FROM builder-rohc AS builder
+
+ARG MARCH
+ARG NUM_JOBS
+ARG DEBUG_BUILD=0
+
+# Full Aerial SDK source (pack_nvipc.sh expects cuBB_SDK at repo root with cuPHY-CP, cuPHY, …).
+COPY aerial-cuda-accelerated-ran /aerial
+# The OCUDU submodule pins the standalone plugin at plugins/aerial; no overlay is required.
+COPY ocudu /src
+
+ARG COMPILER=gcc
+ARG EXTRA_CMAKE_ARGS=""
+ENV ROHC_DIR=/opt/rohc
+# Export ARG so the RUN shell sees it (ARG is not in env by default)
+ENV DEBUG_BUILD=$DEBUG_BUILD
+RUN mkdir -p /opt/ocudu/lib /opt/ocudu/bin
+
+RUN set -eu; \
+    NUM_JOBS="${NUM_JOBS:-$(nproc)}"; \
+    export cuBB_SDK=/aerial TEMP_SRC_DIR=/tmp/nvipc_pack; \
+    cd /aerial/cuPHY-CP/gt_common_libs && bash ./pack_nvipc.sh; \
+    cmake -S /tmp/nvipc_pack -B /tmp/nvipc-build \
+      -DNVIPC_CUDA_ENABLE=OFF \
+      -DCMAKE_BUILD_TYPE=Release \
+      -DCMAKE_INSTALL_PREFIX=/opt/ocudu; \
+    cmake --build /tmp/nvipc-build -j"${NUM_JOBS}"; \
+    cmake --install /tmp/nvipc-build; \
+    rm -rf /tmp/nvipc-build /tmp/nvipc_pack
+
+RUN --mount=type=cache,target=/src/build \
+    --mount=type=cache,target=/src/ccache \
+    set -eu; \
+    install -D \
+      /aerial/cuPHY-CP/scfl2adapter/lib/scf_5g_fapi/scf_5g_fapi.h \
+      /src/lib/fapi_adaptor/phy/p7/scf_5g_fapi/scf_5g_fapi.h; \
+    NUM_JOBS="${NUM_JOBS:-$(nproc)}"; \
+    BUILD_TYPE=""; \
+    if [ "${DEBUG_BUILD}" = "1" ]; then BUILD_TYPE="-DCMAKE_BUILD_TYPE=RelWithDebInfo"; fi; \
+    EFFECTIVE_MARCH="${MARCH:-native}"; \
+    EFFECTIVE_MARCH="$(bash /src/docker/scripts/check_cpu_crypto.sh "${MARCH}")"; \
+    echo "Using MCPU=${MARCH:-native}, crypto MARCH=${EFFECTIVE_MARCH} for gnb_split_6 build"; \
+    ARCH_FLAG=""; \
+    if [ "$(uname -m)" = "aarch64" ]; then \
+      ARCH_FLAG="-DMCPU=${MARCH:-native}"; \
+      if [ "${EFFECTIVE_MARCH}" != "native" ]; then ARCH_FLAG="${ARCH_FLAG} -DMARCH=${EFFECTIVE_MARCH}"; fi; \
+    else \
+      ARCH_FLAG="-DMARCH=${EFFECTIVE_MARCH}"; \
+    fi; \
+    find /src/build -mindepth 1 -delete 2>/dev/null || true; \
+    /src/docker/scripts/builder.sh -c "${COMPILER}" -m "-j${NUM_JOBS} gnb_split_6" \
+      -DBUILD_TESTING=False -DENABLE_UHD=Off -DENABLE_DPDK=Off -DENABLE_EXPORT=On -DENABLE_PLUGINS=On \
+      -DENABLE_AERIAL_PLUGIN=On -DNVIPC_DIR=/opt/ocudu \
+      ${ARCH_FLAG} -DCMAKE_INSTALL_PREFIX=/opt/ocudu \
+      ${BUILD_TYPE} ${EXTRA_CMAKE_ARGS} /src; \
+    install -D /src/build/apps/gnb_split_6/gnb /opt/ocudu/bin/gnb_split_6; \
+    find /src/build -type f \( -name '*.so' -o -name '*.so.*' \) -exec cp -a {} /opt/ocudu/lib/ \;
+
+################
+# Stage 2: Run #
+################
+
+FROM runtime-base AS runtime
+
+COPY --from=builder /opt/rohc  /opt/rohc
+COPY --from=builder /opt/ocudu /usr/local
+COPY --from=builder /src/scripts /usr/local/share/ocudu/scripts
+
+# Ensure gettext in final image (some cached bases omit it); render_gnb_config.sh also falls back to python3.
+RUN DEBIAN_FRONTEND=noninteractive apt-get update && \
+    apt-get install -y --no-install-recommends gettext-base && \
+    apt-get clean && rm -rf /var/lib/apt/lists/*
+
+ENV LD_LIBRARY_PATH=/opt/rohc/lib:/usr/local/lib
+ENV PATH=$PATH:/usr/local/bin

@@ -37,7 +37,7 @@ def test_e3_dapp_lifecycle(args):
     socket.setsockopt(zmq.RCVTIMEO, 5000)
     socket.setsockopt(zmq.LINGER, 0)
 
-    print(f"--- Testing Full dApp Lifecycle for model: {args.model or '(server default)'} ---")
+    print(f"--- Testing Full dApp Lifecycle for model: {args.model or '(dApp default)'} ---")
     if args.agent:
         print(f"--- Target agent: {args.agent} ---")
     if args.interactive:
@@ -76,7 +76,7 @@ def test_e3_dapp_lifecycle(args):
 
     # 3. Subscribe dApp
     agent_info = f" to agent '{args.agent}'" if args.agent else ""
-    model_info = args.model if args.model else "(server default)"
+    model_info = args.model if args.model else "(dApp default)"
     print(f"\n[Step 3] Subscribing this manager to model='{model_info}'{agent_info} with telemetry IDs={args.telemetry_ids}...")
     subscribe_request = {
         "cmd": "subscribe",
@@ -175,7 +175,7 @@ if __name__ == "__main__":
     parser.add_argument('--host', default='localhost', help='E3 Manager host')
     parser.add_argument('--port', default=5558, type=int, help='E3 Manager port')
     parser.add_argument('-a', '--agent', help='Specific E3 Agent name to target (e.g., NVIDIA_L1)')
-    parser.add_argument('-m', '--model', default=None, help='Model to request for subscription (omit to use server default)')
+    parser.add_argument('-m', '--model', default=None, help='Model to request for subscription (omit to use the dApp default)')
     parser.add_argument('-t', '--telemetry-ids', default='1,4,5,6', help='Comma-separated telemetry IDs to subscribe to (e.g., 1=iq_samples, 4=timestamp, 5=sfn, 6=slot)')
     parser.add_argument('-r', '--ran-function-id', default=2, type=int, help='RAN Function Identifier (default: 2 = NVIDIA KPM)')
     parser.add_argument('-p', '--periodicity', dest='periodicity', default=100000, type=int, help='Periodicity in microseconds for E3 indications (default: 100000 = 100ms)')

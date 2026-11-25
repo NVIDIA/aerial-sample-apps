@@ -2,7 +2,7 @@
   "_copyright": "SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. SPDX-License-Identifier: Apache-2.0",
   "title": "E3 Protocol Message Examples",
   "description": "Example messages for the E3 Application Protocol (E3AP) and dApp client interface. Includes PUSCH and SRS indication examples.",
-  "version": "1.2.0",
+  "version": "1.2.1",
 
   "e3ap_message_examples": {
 
@@ -13,7 +13,7 @@
         "id": 1,
         "e3apProtocolVersion": "1.0.0",
         "dAppName": "PRB Power",
-        "dAppVersion": "1.2.0",
+        "dAppVersion": "1.2.1",
         "vendor": "NVIDIA"
       }
     },
@@ -31,7 +31,7 @@
         "ranFunctionList": [
           {
             "ranFunctionIdentifier": 2,
-            "telemetryIdentifierList": [1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47,48,49,50,51,52,53,54,55,56,57,58,59,60,61,62,63,64,65,66,67,68,69,70,71,72,73,74,75,76,77,78,79],
+            "telemetryIdentifierList": [1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47,48,49,50,51,52,53,54,55,56,57,58,59,60,61,62,63,64,65,66,67,68,69,70,71,72,73,74,75,76,77,78,79,80,81,82,83,84,85,86],
             "controlIdentifierList": [],
             "ranFunctionData": [
               {
@@ -180,8 +180,8 @@
         "responseCode": "positive",
         "subscriptionId": 1,
         "ranFunctionIdentifier": 2,
-        "telemetryGrantedList": [1, 4, 5, 6],
-        "controlGrantedList": [],
+        "telemetryIdentifierList": [1, 4, 5, 6],
+        "controlIdentifierList": [],
         "periodicity": 100000
       }
     },
@@ -537,7 +537,7 @@
               "ues": [
                 {
                   "rnti": 4127,
-                  "ue_grp_idx": 0,
+                  "ue_grp_idx": 1,
                   "h_offset": 0,
                   "h_size": 1440,
                   "rb_start": 0,
@@ -545,7 +545,7 @@
                   "mcs_index": 18,
                   "tb_size": 2216,
                   "pdu_len": 2216,
-                  "pdu_offset": 0,
+                  "pdu_offset": 1544,
                   "sinr": 12.3,
                   "tb_crc_fail": 0
                 }
@@ -556,8 +556,8 @@
       },
       "notes": {
         "n_cells": "cells[].length equals n_cells for the slot.",
-        "shm_indexing": "Each cell carries independent buffer/write indices and hest_row_byte_offset; per-UE H and PDU are sliced within the owning cell's blob via h_offset/h_size and pdu_offset/pdu_len.",
-        "reader": "Single-cell dApps (prb-power-*) consume cells[0]; the sanity dApp iterates all cells[]."
+        "shm_indexing": "Each cell carries independent buffer/write indices and hest_row_byte_offset; per-UE H is sliced within the owning cell's blob via h_offset/h_size. PUSCH PDUs of all cells are packed back-to-back in the PUSCH buffer, so pdu_offset counts from the start of that buffer and continues across cells; ue_grp_idx is likewise numbered across the cell group.",
+        "reader": "Single-cell dApps (prb-power-*) consume cells[0]; a multi-cell dApp iterates cells[]."
       }
     },
 

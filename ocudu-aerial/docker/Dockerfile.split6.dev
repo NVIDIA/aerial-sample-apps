@@ -1,0 +1,68 @@
+#
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+# http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+# Development image for Split 6 (gnb_split_6). Single-stage: build deps, ROHC,
+# and runtime tools in one container. No source COPY; bind-mount at runtime.
+#
+# Build context: same as Dockerfile.split6 (ocudu submodule root).
+# Run: docker compose -f docker/docker-compose.yml --profile dev up -d
+# Then: docker exec -it ocudu_gnb_dev bash, and run ./docker/scripts/build_gnb_split6.sh /workspace
+#
+# Build with -DENABLE_PLUGINS=ON -DENABLE_AERIAL_PLUGIN=ON so the in-tree Aerial
+# split6 plugin (from the ocudu submodule branch) is linked into gnb_split_6.
+#
+
+ARG OS_VERSION=24.04
+ARG MARCH=native
+ARG NUM_JOBS=""
+ARG ROHC_VERSION=2.3.1
+
+FROM ubuntu:${OS_VERSION}
+
+ARG MARCH
+ARG NUM_JOBS
+ARG ROHC_VERSION
+
+# Whole directory: install_*.sh source the shared common.sh from their own directory.
+COPY docker/scripts/ /usr/local/etc/
+RUN ln -sf /usr/local/etc/install_dependencies.sh /usr/local/etc/install_ocudu_dependencies.sh
+
+# OCUDU + ROHC build deps, then build ROHC
+RUN /usr/local/etc/install_ocudu_dependencies.sh build && \
+    /usr/local/etc/install_rohc_dependencies.sh build && \
+    DEBIAN_FRONTEND=noninteractive apt-get update && \
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends git clang && \
+    EFFECTIVE_MARCH="${MARCH:-native}"; \
+    if [ -f /usr/local/etc/check_cpu_crypto.sh ]; then \
+      EFFECTIVE_MARCH="$(bash /usr/local/etc/check_cpu_crypto.sh "${MARCH}")"; \
+    fi; \
+    echo "Using MARCH=${EFFECTIVE_MARCH} for ROHC build" && \
+    /usr/local/etc/build_rohc.sh "${ROHC_VERSION}" "${EFFECTIVE_MARCH}" ${NUM_JOBS} && \
+    rm -rf /tmp/rohc-*
+
+# Runtime deps + dev tools
+RUN /usr/local/etc/install_ocudu_dependencies.sh run && \
+    /usr/local/etc/install_rohc_dependencies.sh run && \
+    DEBIAN_FRONTEND=noninteractive apt-get update && apt-get install -y --no-install-recommends \
+    curl ntpdate python3 iproute2 gdb ccache vim gettext-base && \
+    apt-get autoremove -y && apt-get clean && rm -rf /var/lib/apt/lists/*
+
+ENV ROHC_DIR=/opt/rohc
+# Include /opt/ocudu/lib for installed OCUDU shared deps (e.g. nvIPC-related paths may be added at runtime).
+ENV LD_LIBRARY_PATH=/opt/rohc/lib:/usr/local/lib:/opt/ocudu/lib
+ENV PATH=${PATH}:/usr/local/bin:/opt/ocudu/bin
+
+WORKDIR /workspace

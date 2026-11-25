@@ -3,7 +3,7 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "title": "E3 Protocol Message Schemas",
   "description": "JSON Schema definitions for E3 Application Protocol (E3AP) messages exchanged between dApps (E3 Manager) and E3 Agents, including E3 Service Model (E3SM) payload definitions for the NVIDIA KPM service model. Each telemetry ID maps to a specific stream; the setupResponse advertises the full set. Streams are delivered on either the PUSCH or SRS indication path depending on their type.",
-  "version": "1.2.0",
+  "version": "1.2.1",
 
   "definitions": {
     "dAppId": {
@@ -229,12 +229,12 @@
           "type": "integer",
           "description": "RAN function ID (echoed from request, present on positive subscription)"
         },
-        "telemetryGrantedList": {
+        "telemetryIdentifierList": {
           "type": "array",
           "items": { "type": "integer" },
           "description": "Telemetry IDs actually granted (may differ from requested)"
         },
-        "controlGrantedList": {
+        "controlIdentifierList": {
           "type": "array",
           "items": { "type": "integer" },
           "description": "Control IDs actually granted"
@@ -316,11 +316,11 @@
                   },
                   "pdu_data": {
                     "type": "object",
-                    "description": "Shared memory reference to PUSCH PDU data (all UEs in this cell concatenated). Per-UE slicing via pdu_offset/pdu_len in ues[]. PUSCH path, telemetry ID 2.",
+                    "description": "Shared memory reference to PUSCH PDU data. PDUs of all UEs and cells are packed back-to-back in the ping-pong buffer across slots; a UE's PDU is pdu_len bytes at pdu_offset from the start of the buffer. PUSCH path, telemetry ID 2.",
                     "properties": {
                       "shm_name": { "type": "string", "description": "Shared memory key" },
                       "pusch_buffer_index": { "type": "integer", "minimum": 0, "maximum": 1, "description": "Ping-pong buffer index" },
-                      "pusch_write_index": { "type": "integer", "description": "Current write row in the buffer" }
+                      "pusch_write_index": { "type": "integer", "description": "Number of UE PDU records already in the buffer before this slot (a record count, not a byte offset)" }
                     },
                     "required": ["shm_name", "pusch_buffer_index", "pusch_write_index"]
                   },
@@ -337,6 +337,7 @@
                   },
                   "n_rx_ant": { "type": "integer", "description": "Number of receive antennas (PUSCH path, telemetry ID 8)" },
                   "n_rx_ant_srs": { "type": "integer", "description": "Number of SRS receive antennas (shared PUSCH/SRS, telemetry ID 9)" },
+                  "n_prb_ul_bwp": { "type": "integer", "minimum": 1, "maximum": 273, "description": "UL bandwidth part size in PRBs; iq_samples and srs_iq_samples PRBs at or above it are zero (shared PUSCH/SRS, telemetry ID 80)" },
                   "n_bs_ants": { "type": "integer", "description": "Number of base station antennas in PUSCH H estimates (PUSCH path, telemetry ID 11)" },
                   "n_ue": { "type": "integer", "description": "Number of scheduled PUSCH UEs in this cell, equals ues[].length (PUSCH path, telemetry ID 34)" },
                   "srs_iq_samples": {
@@ -382,11 +383,11 @@
                         "rnti": { "type": "integer", "description": "Radio Network Temporary Identifier (shared PUSCH/SRS, telemetry ID 33)" },
                         "tb_crc_fail": { "type": "integer", "description": "Transport Block CRC failure, 0=pass 1=fail (PUSCH, ID 16)" },
                         "cb_errors": { "type": "integer", "description": "Code Block CRC error count (PUSCH, ID 17)" },
-                        "rsrp": { "type": "number", "description": "Reference Signal Received Power in dB (PUSCH, ID 18)" },
-                        "noise_var": { "type": "number", "description": "Noise+interference variance in dB, pre- or post-eq per enable_pusch_sinr, pre by default (PUSCH, ID 19)" },
-                        "sinr": { "type": "number", "description": "SINR in dB, pre- or post-eq per enable_pusch_sinr, pre by default (PUSCH, ID 39)" },
+                        "rsrp": { "type": ["number", "null"], "description": "Reference Signal Received Power in dB (PUSCH, ID 18)" },
+                        "noise_var": { "type": ["number", "null"], "description": "Noise+interference variance in dB, pre- or post-eq per enable_pusch_sinr, pre by default (PUSCH, ID 19)" },
+                        "sinr": { "type": ["number", "null"], "description": "SINR in dB, pre- or post-eq per enable_pusch_sinr, pre by default (PUSCH, ID 39)" },
                         "cb_count": { "type": "integer", "description": "Number of Code Blocks per transport block (PUSCH, ID 20)" },
-                        "rssi": { "type": "number", "description": "Received Signal Strength Indicator in dB, per-group (PUSCH, ID 21)" },
+                        "rssi": { "type": ["number", "null"], "description": "Received Signal Strength Indicator in dB, per-group (PUSCH, ID 21)" },
                         "qam_mod_order": { "type": "integer", "description": "QAM modulation order 2=QPSK 4=16QAM 6=64QAM 8=256QAM (PUSCH, ID 22)" },
                         "mcs_index": { "type": "integer", "description": "Modulation and Coding Scheme index 0-31 (PUSCH, ID 23)" },
                         "mcs_table_index": { "type": "integer", "description": "MCS table index 0=notqam256 1=qam256 2=qam64LowSE (PUSCH, ID 24)" },
@@ -396,7 +397,7 @@
                         "nr_of_symbols": { "type": "integer", "description": "PUSCH duration in symbols, per-group (PUSCH, ID 28)" },
                         "tb_size": { "type": "integer", "description": "Transport block size in bytes (PUSCH, ID 29)" },
                         "pdu_len": { "type": "integer", "description": "PDU length: tb_size on CRC pass, 0 on fail (PUSCH, ID 30)" },
-                        "pdu_offset": { "type": "integer", "minimum": 0, "description": "Byte offset of this UE's PDU within the cell's PUSCH SHM blob, for multi-UE/multi-cell demux (PUSCH, ID 79)" },
+                        "pdu_offset": { "type": "integer", "minimum": 0, "description": "Byte offset of this UE's PDU from the start of the PUSCH SHM buffer selected by pusch_buffer_index (PUSCH, ID 79)" },
                         "target_code_rate": { "type": "integer", "description": "Target code rate x10 (PUSCH, ID 31)" },
                         "new_data_indicator": { "type": "integer", "description": "New data indicator 0 or 1 (PUSCH, ID 32)" },
                         "n_layers": { "type": "integer", "description": "Spatial layers for this UE (PUSCH, ID 12)" },
@@ -407,28 +408,28 @@
                         "n_subcarriers": { "type": "integer", "description": "Subcarriers in group allocation (PUSCH, ID 13)" },
                         "n_dmrs_estimates": { "type": "integer", "description": "DMRS symbol count in group (PUSCH, ID 14)" },
                         "dmrs_symb_pos": { "type": "integer", "description": "DMRS symbol position bitmask, per-group (PUSCH, ID 15)" },
-                        "timing_advance": { "type": "number", "description": "Timing advance estimate (PUSCH, ID 40)" },
-                        "cfo_hz": { "type": "number", "description": "Carrier Frequency Offset in Hz (PUSCH, ID 43)" },
+                        "timing_advance": { "type": ["number", "null"], "description": "Timing advance estimate (PUSCH, ID 40)" },
+                        "cfo_hz": { "type": ["number", "null"], "description": "Carrier Frequency Offset in Hz (PUSCH, ID 43)" },
                         "harq_process_id": { "type": "integer", "description": "HARQ process ID 0-15 (PUSCH, ID 41)" },
                         "rv_index": { "type": "integer", "description": "Redundancy version index 0-3 (PUSCH, ID 42)" },
 
                         "srs_hest_n_prb_grps": { "type": "integer", "description": "Number of PRB groups in SRS H-estimate grid (SRS, ID 46)" },
-                        "srs_hest_offset": { "type": "integer", "minimum": 0, "description": "Byte offset of UE H-estimate blob within SHM buffer (SRS, ID 47)" },
+                        "srs_hest_offset": { "type": "integer", "minimum": 0, "description": "Byte offset of UE H-estimate blob from the start of the SRS H-est SHM buffer (shared by all cells) (SRS, ID 47)" },
                         "srs_hest_size": { "type": "integer", "minimum": 0, "description": "Byte count of UE H-estimate blob (SRS, ID 48)" },
-                        "srs_rb_snr_offset": { "type": "integer", "minimum": 0, "description": "Byte offset of UE RbSNR blob within SHM buffer (SRS, ID 50)" },
+                        "srs_rb_snr_offset": { "type": "integer", "minimum": 0, "description": "Byte offset of UE RbSNR blob from the start of the SRS RbSNR SHM buffer (shared by all cells) (SRS, ID 50)" },
                         "srs_rb_snr_size": { "type": "integer", "minimum": 0, "description": "Byte count of UE RbSNR blob (SRS, ID 51)" },
-                        "srs_wideband_snr": { "type": "number", "description": "SRS wideband SNR in dB (SRS, ID 55)" },
-                        "srs_signal_energy": { "type": "number", "description": "SRS signal energy (SRS, ID 56)" },
-                        "srs_noise_energy": { "type": "number", "description": "SRS noise energy (SRS, ID 57)" },
-                        "srs_toa": { "type": "number", "description": "SRS time of arrival in microseconds (SRS, ID 58)" },
+                        "srs_wideband_snr": { "type": ["number", "null"], "description": "SRS wideband SNR in dB (SRS, ID 55)" },
+                        "srs_signal_energy": { "type": ["number", "null"], "description": "SRS signal energy (SRS, ID 56)" },
+                        "srs_noise_energy": { "type": ["number", "null"], "description": "SRS noise energy (SRS, ID 57)" },
+                        "srs_toa": { "type": ["number", "null"], "description": "SRS time of arrival in microseconds (SRS, ID 58)" },
                         "srs_hd_ant_flag": { "type": "integer", "description": "SRS high-density antenna port flag, 1 = SNR unreliable (SRS, ID 59)" },
                         "srs_sc_corr": {
                           "type": "array",
-                          "items": { "type": "number" },
+                          "items": { "type": ["number", "null"] },
                           "minItems": 2, "maxItems": 2,
                           "description": "SRS wideband subcarrier correlation [re, im] (SRS, ID 60)"
                         },
-                        "srs_cs_corr_ratio_db": { "type": "number", "description": "SRS correlation energy on used vs unused cyclic shifts in dB (SRS, ID 61)" },
+                        "srs_cs_corr_ratio_db": { "type": ["number", "null"], "description": "SRS correlation energy on used vs unused cyclic shifts in dB (SRS, ID 61)" },
                         "srs_ant_ports": { "type": "integer", "description": "SRS number of antenna ports (SRS, ID 62)" },
                         "srs_n_syms": { "type": "integer", "description": "SRS number of symbols (SRS, ID 63)" },
                         "srs_n_repetitions": { "type": "integer", "description": "SRS number of repetitions (SRS, ID 64)" },
@@ -444,7 +445,13 @@
                         "srs_t_offset": { "type": "integer", "description": "SRS slot offset T_offset (SRS, ID 74)" },
                         "srs_usage": { "type": "integer", "description": "SRS usage bitmask (SRS, ID 75)" },
                         "srs_n_valid_prg": { "type": "integer", "description": "Number of valid PRB groups in SRS (SRS, ID 76)" },
-                        "srs_prg_size": { "type": "integer", "description": "SRS PRB group size (SRS, ID 77)" }
+                        "srs_prg_size": { "type": "integer", "description": "SRS PRB group size (SRS, ID 77)" },
+                        "srs_sequence_id": { "type": "integer", "description": "SRS sequence ID n_ID^SRS (SRS, ID 81)" },
+                        "srs_config_idx": { "type": "integer", "description": "SRS bandwidth config index C_SRS (SRS, ID 82)" },
+                        "srs_bandwidth_idx": { "type": "integer", "description": "SRS bandwidth index B_SRS (SRS, ID 83)" },
+                        "srs_group_seq_hopping": { "type": "integer", "description": "0=none, 1=group hopping, 2=sequence hopping (SRS, ID 84)" },
+                        "srs_start_prg": { "type": "integer", "description": "First PRB group covered by the SRS H-estimate buffer (SRS, ID 85)" },
+                        "srs_start_valid_prg": { "type": "integer", "description": "First PRB group holding a valid H-estimate (SRS, ID 86)" }
                       }
                     }
                   }

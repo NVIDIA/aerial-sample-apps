@@ -7,6 +7,8 @@ A collection of example applications and reference implementations for the [NVID
 - **[dapps/](dapps/)**: Distributed applications using the E3 interface
   for real-time RAN data processing and control, validated on
   [NVIDIA Aerial Testbed](https://docs.nvidia.com/aerial/testbed/latest/index.html).
+- **[ocudu-aerial/](ocudu-aerial/)**: Split-6 reference stack for OCUDU and
+  NVIDIA Aerial.
 
 Additional sample applications targeting other parts of the AI Aerial platform will be added in future releases.
 
@@ -30,11 +32,12 @@ Visit the [NVIDIA 6G Developer Program](https://developer.nvidia.com/6g-program)
 Each subdirectory is a project in its own right, with its own license:
 
 - **[dapps/](dapps/)**: Apache License 2.0, see [`dapps/LICENSE`](dapps/LICENSE).
+- **[ocudu-aerial/](ocudu-aerial/)**: Apache License 2.0, see [`ocudu-aerial/LICENSE`](ocudu-aerial/LICENSE). Third-party components are listed in [`ocudu-aerial/NOTICE`](ocudu-aerial/NOTICE).
 
 ## Contributing
 
 This project is not accepting code contributions at this time. Bug reports, feature requests, and
-documentation feedback are welcome through GitHub Issues.
+documentation feedback are welcome through GitHub Issues. See [`CONTRIBUTING.md`](CONTRIBUTING.md).
 
 ## Security
 

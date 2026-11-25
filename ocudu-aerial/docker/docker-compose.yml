@@ -1,0 +1,280 @@
+#
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+# http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+# Split-6 stack for ocudu-aerial: gNB + Open5GS 5GC.
+# Default (no profile): 5gc + gnb + aerial. IPs: OPEN5GS_IP/GNB_IP default 10.53.1.2/10.53.1.3; gnb_dev uses GNB_DEV_IP/GNB_DEV_METRICS_IP default 10.53.1.4/172.19.1.4 (see split6.env).
+#
+#   docker compose -f docker/docker-compose.yml up gnb
+#   docker compose -f docker/docker-compose.yml up -d
+#
+# Dev (host-mounted OCUDU + Aerial): start only dev services so prod gnb/aerial are not duplicated, e.g.
+#   docker compose -f docker/docker-compose.yml up 5gc gnb_dev aerial_dev -d
+#   or: ./install.sh dev up
+#
+# Optional: --env-file docker/split6.env to override IPs and paths.
+#
+# gNB runs /split6_scripts/run_gnb_split6.sh; Aerial runs ./run_l1.sh (SDK built in Dockerfile.aerial).
+#
+# Or: ./install.sh [build|up|down|logs] and ./install.sh dev [...]
+
+#
+
+services:
+  5gc:
+    container_name: ${OPEN5GS_CONTAINER_NAME:-open5gs_5gc}
+    # Local tag only. open5gs/5gc looks like Docker Hub and compose will try to pull it.
+    image: ${OPEN5GS_IMAGE:-ocudu/open5gs-5gc}
+    pull_policy: build
+    build:
+      context: ../ocudu/docker/open5gs
+      dockerfile: Dockerfile
+      args:
+        OS_VERSION: "22.04"
+    env_file:
+      - ${OPEN_5GS_ENV_FILE:-../ocudu/docker/open5gs/open5gs.env}
+    environment:
+      - TZ=Etc/UTC
+      # open5gs.env ships a single inline subscriber string, which makes the entrypoint
+      # ignore the mounted CSV and register only that one UE.
+      - SUBSCRIBER_DB=subscriber_db.csv
+    privileged: true
+    ports:
+      - "9999:9999/tcp"
+    volumes:
+      # OPEN5GS_SUBSCRIBER_DB_PATH: ../configs/subscriber_db.local.csv (local) or ../configs/subscriber_db.csv (default)
+      - ${OPEN5GS_SUBSCRIBER_DB_PATH:-../configs/subscriber_db.csv}:/open5gs/subscriber_db.csv:ro
+    command: 5gc -c open5gs-5gc.yml
+    healthcheck:
+      # Require both the UDR SBI and AMF NGAP (SCTP) listeners before starting the gNB.
+      test: ["CMD-SHELL", "nc -z 127.0.0.20 7777 && ss -H -l -A sctp | grep -q ':38412'"]
+      interval: 3s
+      timeout: 1s
+      retries: 60
+    networks:
+      ran:
+        ipv4_address: ${OPEN5GS_IP:-10.53.1.2}
+
+  gnb:
+    container_name: ${GNB_CONTAINER_NAME:-ocudu_gnb}
+    image: ${GNB_IMAGE:-ocudu/gnb}
+    pull_policy: build
+    build:
+      # Repo root: Dockerfile COPYs ocudu submodule (with plugins/aerial) and Aerial SDK for nvIPC.
+      context: ..
+      dockerfile: docker/Dockerfile.split6
+      args:
+        OS_VERSION: "24.04"
+        DEBUG_BUILD: ${DEBUG_BUILD:-0}
+        # Optional: set to get real commit in gNB banner (e.g. GIT_COMMIT=$(git -C ocudu rev-parse --short HEAD))
+        GIT_COMMIT: ${GIT_COMMIT:-}
+        GIT_BRANCH: ${GIT_BRANCH:-}
+    privileged: true
+    # Without this the gNB's stdin is /dev/null and the app console commands (ho, cho, release, t)
+    # can never be delivered. With it, stdin is a pipe writable via /proc/1/fd/0.
+    stdin_open: true
+    # Same host UID/GID as aerial: nvIPC uses host /dev/shm; root vs non-root breaks L1↔L2.
+    user: "${UID:-0}:${GID:-0}"
+    cap_add:
+      - SYS_NICE
+      - CAP_SYS_PTRACE
+    # nvIPC SHM: same as aerial so MAC (gNB) and PHY (aerial) share /dev/shm
+    shm_size: 4096m
+    userns_mode: host
+    ipc: host
+    volumes:
+      - /dev/bus/usb/:/dev/bus/usb/
+      - /usr/share/uhd/images:/usr/share/uhd/images
+      - gnb-storage:/tmp
+      - ${GNB_CONFIG_DIR:-../configs}:/configs:ro
+      - ../scripts:/split6_scripts:ro
+    environment:
+      - OPEN5GS_IP=${OPEN5GS_IP:-10.53.1.2}
+      - GNB_IP=${GNB_IP:-10.53.1.3}
+      - GNB_CONFIG_TEMPLATE=/configs/${GNB_CONFIG_FILE:-gnb_split6.yml}
+      - GNB_CONFIG_OVERLAY=${GNB_CONFIG_OVERLAY:-}
+      - GNB_MAIN_POOL_CPUS=${GNB_MAIN_POOL_CPUS:-12-18}
+      - GNB_MAIN_POOL_PINNING=${GNB_MAIN_POOL_PINNING:-mask}
+      - GNB_MAIN_POOL_NOF_THREADS=${GNB_MAIN_POOL_NOF_THREADS:-4}
+      - INSTALL_PREFIX=/usr/local
+      - NVIPC_LIB_PATH=/usr/local/lib
+      - GNB_START_DELAY=${GNB_START_DELAY:-0}
+    networks:
+      ran:
+        ipv4_address: ${GNB_IP:-10.53.1.3}
+      metrics:
+        ipv4_address: 172.19.1.3
+    depends_on:
+      5gc:
+        condition: service_healthy
+      aerial:
+        condition: service_started
+    command: bash -c "exec /split6_scripts/run_gnb_split6.sh"
+
+  gnb_dev:
+    container_name: ocudu_gnb_dev
+    profiles:
+      - dev
+    image: ocudu/gnb:dev
+    pull_policy: build
+    build:
+      context: ../ocudu
+      dockerfile: ../docker/Dockerfile.split6.dev
+      args:
+        OS_VERSION: "24.04"
+    privileged: true
+    user: "${UID:-0}:${GID:-0}"
+    cap_add:
+      - SYS_NICE
+      - CAP_SYS_PTRACE
+    # nvIPC SHM: same as aerial so MAC (gNB) and PHY (aerial) share /dev/shm
+    shm_size: 4096m
+    userns_mode: host
+    ipc: host
+    volumes:
+      - ../ocudu:/workspace:rw
+      - ../ocudu/build:/workspace/build:rw
+      - ../scripts:/workspace/split6_scripts:rw
+      # nvIPC build: packed source from aerial container (manual pack → copy/extract to this dir)
+      - ../nvipc_src:/workspace/gt_common_libs:rw
+      - gnb-storage:/tmp
+      - ${GNB_CONFIG_DIR:-../configs}:/configs:rw
+    environment:
+      - OPEN5GS_IP=${OPEN5GS_IP:-10.53.1.2}
+      - GNB_IP=${GNB_DEV_IP:-10.53.1.4}
+      - GNB_CONFIG_TEMPLATE=/configs/${GNB_CONFIG_FILE:-gnb_split6.yml}
+      - GNB_CONFIG_OVERLAY=${GNB_CONFIG_OVERLAY:-}
+      - GNB_MAIN_POOL_CPUS=${GNB_MAIN_POOL_CPUS:-12-18}
+      - GNB_MAIN_POOL_PINNING=${GNB_MAIN_POOL_PINNING:-mask}
+      - GNB_MAIN_POOL_NOF_THREADS=${GNB_MAIN_POOL_NOF_THREADS:-4}
+      - GNB_START_DELAY=${GNB_START_DELAY:-0}
+
+    networks:
+      ran:
+        ipv4_address: ${GNB_DEV_IP:-10.53.1.4}
+      metrics:
+        ipv4_address: ${GNB_DEV_METRICS_IP:-172.19.1.4}
+    depends_on:
+      5gc:
+        condition: service_healthy
+      aerial_dev:
+        condition: service_started
+    command: sleep infinity
+
+  aerial:
+    container_name: ${AERIAL_CONTAINER_NAME:-ocudu_aerial}
+    # Distinct from the cubb base and from a generic local :26-2; this tag is the
+    # Dockerfile.aerial result (FAPI 10.04 cuphycontroller_scf).
+    image: ${AERIAL_BUILT_IMAGE:-aerial-cuda-accelerated-ran:26-2_10.04}
+    pull_policy: build
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.aerial
+      args:
+        AERIAL_DEV_VERSION: ${AERIAL_DEV_VERSION:-26-2}
+        AERIAL_IMAGE: ${AERIAL_IMAGE:-nvcr.io/nvidia/aerial/aerial-cuda-accelerated-ran:26-2-cubb}
+    platform: ${AERIAL_PLATFORM:-linux/arm64}
+    privileged: true
+    user: "${UID:-0}:${GID:-0}"
+    working_dir: /opt/nvidia/cuBB
+    hostname: ocudu_aerial
+    network_mode: host
+    shm_size: 4096m
+    userns_mode: host
+    ipc: host
+    extra_hosts:
+      - "ocudu_aerial:127.0.0.1"
+    environment:
+      - host_cuBB_SDK=/opt/nvidia/cuBB
+      - AERIAL_RUN_L1_ARGS=${AERIAL_RUN_L1_ARGS:-}
+    volumes:
+      - /var/lock:/var/lock
+      - /dev/hugepages:/dev/hugepages
+      - /lib/modules:/lib/modules
+      - /etc:/host/etc:ro
+      - /run/systemd/system:/run/systemd/system:ro
+      - /var/run/dbus/system_bus_socket:/var/run/dbus/system_bus_socket
+      - /var/log/syslog:/host/var/log/syslog:ro
+      - /var/log/aerial:/var/log/aerial
+      - ../aerial-cuda-accelerated-ran/cuPHY-CP/cuphycontroller/config/:/opt/nvidia/cuBB/cuPHY-CP/cuphycontroller/config/:ro
+      - ../aerial-cuda-accelerated-ran/cuPHY/nvlog/config/:/opt/nvidia/cuBB/cuPHY/nvlog/config/:ro
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    devices:
+      - /dev/gdrdrv:/dev/gdrdrv
+    command: ["fixuid", "/bin/bash", "-c", "exec ./run_l1.sh ${AERIAL_RUN_L1_ARGS:-}"]
+
+  aerial_dev:
+    container_name: ocudu_aerial_dev
+    profiles:
+      - dev
+    image: ${AERIAL_IMAGE:-nvcr.io/nvidia/aerial/aerial-cuda-accelerated-ran:26-2-cubb}
+    platform: ${AERIAL_PLATFORM:-linux/arm64}
+    privileged: true
+    user: "${UID:-0}:${GID:-0}"
+    working_dir: /opt/nvidia/cuBB
+    hostname: ocudu_aerial_dev
+    network_mode: host
+    shm_size: 4096m
+    userns_mode: host
+    ipc: host
+    extra_hosts:
+      - "ocudu_aerial_dev:127.0.0.1"
+    environment:
+      - host_cuBB_SDK=/opt/nvidia/cuBB
+      - AERIAL_RUN_L1_ARGS=${AERIAL_RUN_L1_ARGS:-}
+    volumes:
+      - ../aerial-cuda-accelerated-ran:/opt/nvidia/cuBB:rw
+      - ../nvipc_src:/nvipc_out:rw
+      - ../scripts:/nvipc_scripts:ro
+      - ../aerial_build_out:/opt/nvidia/cuBB/build_output:rw
+      - /var/lock:/var/lock
+      - /dev/hugepages:/dev/hugepages
+      - /lib/modules:/lib/modules
+      - /etc:/host/etc:ro
+      - /run/systemd/system:/run/systemd/system:ro
+      - /var/run/dbus/system_bus_socket:/var/run/dbus/system_bus_socket
+      - /var/log/syslog:/host/var/log/syslog:ro
+      - /var/log/aerial:/var/log/aerial
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    devices:
+      - /dev/gdrdrv:/dev/gdrdrv
+    command: ["fixuid", "/bin/bash", "-c", "exec ./run_l1.sh ${AERIAL_RUN_L1_ARGS:-}"]
+
+volumes:
+  gnb-storage:
+
+networks:
+  ran:
+    ipam:
+      driver: default
+      config:
+        - subnet: 10.53.1.0/24
+  metrics:
+    ipam:
+      driver: default
+      config:
+        - subnet: 172.19.1.0/24

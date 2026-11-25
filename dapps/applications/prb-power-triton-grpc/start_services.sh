@@ -69,13 +69,14 @@ cleanup() {
     rc=$?
     [ -n "$CLEANED" ] && return; CLEANED=1
     echo "Caught signal, stopping services..."
-    rm -f /dev/shm/triton_python_backend_shm_region_* 2>/dev/null || true
+    # The dApp unregisters its shared memory through Triton, so Triton must outlive it
+    [ -n "$E3_PID" ]     && kill -SIGTERM "$E3_PID"     2>/dev/null || true
+    wait "$E3_PID"     2>/dev/null || true
     [ -n "$VIS_PID" ]    && kill -SIGTERM "$VIS_PID"    2>/dev/null || true
     [ -n "$TRITON_PID" ] && kill -SIGTERM "$TRITON_PID" 2>/dev/null || true
-    [ -n "$E3_PID" ]     && kill -SIGTERM "$E3_PID"     2>/dev/null || true
     [ -n "$VIS_PID" ] && wait "$VIS_PID" 2>/dev/null || true
     wait "$TRITON_PID" 2>/dev/null || true
-    wait "$E3_PID"     2>/dev/null || true
+    rm -f /dev/shm/triton_python_backend_shm_region_* 2>/dev/null || true
     echo "Cleanup complete."
     exit $rc
 }

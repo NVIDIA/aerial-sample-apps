@@ -1,0 +1,6 @@
+[submodule "ocudu-aerial/aerial-cuda-accelerated-ran"]
+	path = ocudu-aerial/aerial-cuda-accelerated-ran
+	url = https://github.com/NVIDIA/aerial-cuda-accelerated-ran.git
+[submodule "ocudu-aerial/ocudu"]
+	path = ocudu-aerial/ocudu
+	url = https://gitlab.com/ocudu/ocudu.git

@@ -35,6 +35,7 @@ RUN pip3 install --no-deps -r /tmp/deps/no-deps/requirements.txt && \
 # Copy build sources and app files
 COPY common /opt/src/common
 COPY CMakeLists.txt /opt/src/CMakeLists.txt
+COPY LICENSE ATTRIBUTION.rst /opt/src/
 COPY applications/prb-power-triton /opt/src/applications/prb-power-triton
 
 # Build the C++ application

@@ -61,10 +61,10 @@ If the agent does not use `auto_subscribe`, drive the subscription from another 
 ```bash
 docker exec -it dapp-prb-power-python \
     /opt/src/common/client/e3_e2e_test.py \
-    -a NVIDIA_L1 -r 2 -t 1,4,5,6 -p 100000 -d 10
+    -a NVIDIA_L1 -r 2 -t 1,4,5,6,80 -p 100000 -d 10
 ```
 
-This subscribes to IQ samples (1), timestamp (4), SFN (5), and slot (6) from agent `NVIDIA_L1` using RAN Function ID 2 (`-r 2`, NVIDIA KPM), requesting indications every 100ms (`-p 100000`) for 10 seconds (`-d 10`). The model defaults to the one configured in `e3_config.json`.
+This subscribes to IQ samples (1), timestamp (4), SFN (5), slot (6), and n_prb_ul_bwp (80) from agent `NVIDIA_L1` using RAN Function ID 2 (`-r 2`, NVIDIA KPM), requesting indications every 100ms (`-p 100000`) for 10 seconds (`-d 10`). The model defaults to the one configured in `e3_config.json`.
 
 Run the script with `--help` for full options and telemetry ID reference. See the [Application Development Guide](../../docs/application_development_guide.md) for interactive mode and granular control via `e3_client.py`.
 
@@ -83,7 +83,7 @@ The `config/e3_config.json` file controls all runtime settings:
   },
   "application": {
     "name": "PRB Power Python",
-    "version": "1.2.0",
+    "version": "1.2.1",
     "vendor": "NVIDIA",
     "results_pub_port": 5559,
     "enable_results_publishing": true,
@@ -105,7 +105,7 @@ The `config/e3_config.json` file controls all runtime settings:
         "auto_setup": true,
         "subscription_options": {
           "auto_subscribe": true,
-          "telemetry_ids": [1, 4, 5, 6],
+          "telemetry_ids": [1, 4, 5, 6, 80],
           "control_ids": [],
           "ran_function_id": 2,
           "periodicity_us": 100000,
@@ -158,6 +158,8 @@ The `config/e3_config.json` file controls all runtime settings:
 All models return:
 - `prb_power`: shape (273,), float32, power per PRB
 - `timing_us`: shape (2,), float64, `[total_us, compute_us]` inference timing
+
+The dApp publishes only the first `n_prb_ul_bwp` PRBs (telemetry ID 80), so carriers below 100 MHz need no model change.
 
 ONNX and TensorRT models generate their inference artifacts (`.onnx`, `.engine`) on first `initialize()` call if not already present.
 
@@ -250,7 +252,7 @@ Waiting for PRB power data...
 ```
 
 **Features:**
-- Bar chart of power distribution across all 273 PRBs
+- Bar chart of power distribution across the carrier PRBs (`n_prb_ul_bwp`, 273 at 100 MHz)
 - 2D heatmap grid visualization (21x13)
 - Time-series plots of mean/max power and inference latency
 - Live statistics: inference time, max/mean PRB power, active PRBs, frames processed

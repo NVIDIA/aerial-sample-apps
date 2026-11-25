@@ -1,0 +1,40 @@
+#
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+# http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+# Use the OAI CN from oai-cn5g/docker-compose.yaml, which is already running
+# on oai-cn5g-public-net. This file does not define those NFs.
+# 5gc is Open5GS and is built locally; the profile keeps it out of this
+# project so `up` does not build it. depends_on is replaced so the gNB is
+# not pulled back onto that service.
+
+services:
+  5gc:
+    profiles:
+      - open5gs
+  gnb:
+    depends_on: !override
+      aerial:
+        condition: service_started
+    environment:
+      - GNB_CONFIG_TEMPLATE=/configs/gnb_split6_oai_cn.yaml
+    networks:
+      oai_cn:
+        ipv4_address: 192.168.70.140
+
+networks:
+  oai_cn:
+    external: true
+    name: oai-cn5g-public-net

@@ -90,6 +90,15 @@ struct IndicationContext {
 
 using IndicationHandler = std::function<void(const IndicationContext& ctx)>;
 
+// Reads a numeric field, treating absent or null as fallback. The agent sends
+// null for a measurement it could not compute, which value() would throw on.
+template <typename T>
+T NumOr(const nlohmann::json& obj, const char* key, const T fallback)
+{
+    const auto it = obj.find(key);
+    return (it == obj.end() || it->is_null()) ? fallback : it->get<T>();
+}
+
 // Debug utilities
 void ProcessIQSampleDebug(const nlohmann::json& payload, void* ran_shm_ptr);
 void ProcessHEstimatesDebug(const nlohmann::json& payload, void* ran_shm_ptr);
@@ -187,7 +196,7 @@ private:
         std::string agent_id;                          // ID received from agent during setup
         e3::E3State state{e3::E3State::DISCONNECTED};
         std::atomic<bool> auto_setup_active{true};      // Runtime gate (disabled on release)
-        std::atomic<bool> auto_subscribe_active{false}; // Runtime gate (disabled on reject/timeout/unsubscribe/release)
+        std::atomic<bool> auto_subscribe_active{false}; // Runtime gate (disabled on reject/timeout/expiry/unsubscribe/release)
         std::optional<DAppSubscription> subscription;
         std::thread sub_thread;                        // Subscription thread for this agent
         std::shared_ptr<zmq::context_t> zmq_context;   // ZMQ context for this agent's subscription

@@ -61,6 +61,7 @@ Some streams are **shared** (delivered on both paths when subscribed); others ar
 | 6 | `slot` | Shared | Slot | Inline | Slot Number |
 | 7 | `cell_id` | Shared | Cell | Inline | Physical Cell ID |
 | 9 | `n_rx_ant_srs` | Shared | Cell | Inline | Number of SRS RX antennas |
+| 80 | `n_prb_ul_bwp` | Shared | Cell | Inline | UL bandwidth part size in PRBs; IQ PRBs at or above it are zero |
 | 10 | `n_cells` | Shared | Slot | Inline | Number of cells |
 | 33 | `rnti` | Shared | Per-UE | Inline | Radio Network Temporary Identifier |
 | 78 | `timestamp_tai` | Shared | Slot | Inline | TAI timestamp (ns) aligned from SFN/slot via grandmaster clock |
@@ -105,7 +106,7 @@ Some streams are **shared** (delivered on both paths when subscribed); others ar
 | 41 | `harq_process_id` | PUSCH | Per-UE | Inline | HARQ process ID (0-15) |
 | 42 | `rv_index` | PUSCH | Per-UE | Inline | Redundancy version index (0-3) |
 | 43 | `cfo_hz` | PUSCH | Per-UE | Inline | Carrier Frequency Offset in Hz |
-| 79 | `pdu_offset` | PUSCH | Per-UE | Inline | Byte offset of this UE's PDU within the cell's PUSCH SHM blob |
+| 79 | `pdu_offset` | PUSCH | Per-UE | Inline | Byte offset of this UE's PDU from the start of the PUSCH buffer |
 
 **SRS streams** (delivered only on the SRS indication path):
 
@@ -145,6 +146,16 @@ Some streams are **shared** (delivered on both paths when subscribed); others ar
 | 75 | `srs_usage` | SRS | Per-UE | Inline | Bitmask: 0x1=beamMgmt, 0x2=codebook, 0x4=nonCodebook, 0x8=antennaSwitching |
 | 76 | `srs_n_valid_prg` | SRS | Per-UE | Inline | Number of valid PRB groups (= rb_snr length) |
 | 77 | `srs_prg_size` | SRS | Per-UE | Inline | PRBs per PRB-group |
+| 81 | `srs_sequence_id` | SRS | Per-UE | Inline | Sequence ID n_ID^SRS (0-1023), seeds the base sequence and the hopping pattern |
+| 82 | `srs_config_idx` | SRS | Per-UE | Inline | Bandwidth config index C_SRS (0-63), row of the 38.211 table 6.4.1.4.3-1 |
+| 83 | `srs_bandwidth_idx` | SRS | Per-UE | Inline | Bandwidth index B_SRS (0-3), column of the same table |
+| 84 | `srs_group_seq_hopping` | SRS | Per-UE | Inline | 0=none, 1=group hopping, 2=sequence hopping |
+| 85 | `srs_start_prg` | SRS | Per-UE | Inline | First PRB group covered by the SRS H-estimate buffer |
+| 86 | `srs_start_valid_prg` | SRS | Per-UE | Inline | First PRB group holding a valid H-estimate; absolute PRG index of the allocation start |
+
+**Undefined measurements.** Float-valued streams can arrive as JSON `null` when L1 could not compute a value for that UE, for example a UE granted SRS resources that did not transmit. Integer streams are always numbers. Read floats with `e3::NumOr(ue, key, fallback)` from `e3_manager.h`, since `value()` throws on `null` even when given a default.
+
+**Bandwidths below 100 MHz.** IQ rows (`iq_samples`, `srs_iq_samples`) keep the 273 PRB layout at every bandwidth, and only PRBs below the per-cell `n_prb_ul_bwp` carry data; the rest are zero. Subscribe to ID 80 and slice the PRB axis to it rather than assuming 273. See [Data Representation](data_representation.md#iq-samples).
 
 **Indication firing matrix** (which path(s) fire for a given subscription mix):
 
@@ -510,7 +521,7 @@ SRS indications usually arrive much less frequently than PUSCH: the period is `T
 
 ### Multi-Cell Deployments
 
-A single E3 Agent serves the whole cell group. Each indication carries one `cells[]` entry per active cell (`n_cells` at the root); PUSCH and SRS share the same nesting. Each cell owns its shared memory references and `ues[]`, so per-UE H and PDU are sliced within the owning cell's blob. Single-cell dApps read `cells[0]`; multi-cell dApps loop over `cells[]` and key results by `cell_id`.
+A single E3 Agent serves the whole cell group. Each indication carries one `cells[]` entry per active cell (`n_cells` at the root); PUSCH and SRS share the same nesting. Each cell owns its shared memory references and `ues[]`, so per-UE H is sliced within the owning cell's blob; `pdu_offset`, `srs_hest_offset` and `srs_rb_snr_offset` are measured from the start of their buffer, which all cells share. Single-cell dApps read `cells[0]`; multi-cell dApps loop over `cells[]` and key results by `cell_id`.
 
 The multi-cell path has been validated against the NVIDIA Aerial cuBB L1 on a DDDSU TDD pattern: PUSCH + SRS data collection at full throughput up to 4 cells with Data Lake and E3 Agent enabled, and up to 10 cells with just the E3 Agent enabled.
 

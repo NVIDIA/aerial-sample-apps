@@ -8,12 +8,34 @@ the release notes for [Aerial CUDA-Accelerated RAN][acar] and [Aerial Testbed][a
 [atb]: https://docs.nvidia.com/aerial/testbed/latest/text/release_notes.html
 [e3sa]: https://github.com/NVIDIA/aerial-cuda-accelerated-ran/tree/main/cuPHY-CP/e3agent-standalone
 
+## Release 1.2.1 (November 2026)
+
+Validated with:
+
+- Aerial CUDA-Accelerated RAN 26-2.1
+- Aerial Testbed 1.2
+
+### New Features
+
+- **UL bandwidth part size.** The new `n_prb_ul_bwp` stream (ID 80) gives the number of PRBs that
+  carry data in `iq_samples` and `srs_iq_samples` below 100 MHz.
+- **SRS configuration.** Six new SRS streams (IDs 81 to 86) add the sequence ID, bandwidth indices,
+  hopping mode, and the first PRB group of each H-estimate.
+
+### Bug Fixes and Improvements
+
+- Float streams arrive as `null` when L1 could not compute them; the E3 Manager provides a helper
+  to read them with a fallback.
+- The dApps build in `Release` mode by default, speeding up indication JSON parsing.
+- The docs now correctly measure `pdu_offset`, `srs_hest_offset`, and `srs_rb_snr_offset` from the
+  start of the shared memory buffer common to all cells.
+
 ## Release 1.2.0 (October 2026)
 
 Validated with:
 
 - Aerial CUDA-Accelerated RAN 26-2
-- Aerial Testbed
+- Aerial Testbed 1.2
 
 ### New Features
 

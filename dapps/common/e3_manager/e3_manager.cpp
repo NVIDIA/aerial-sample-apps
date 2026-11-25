@@ -920,9 +920,9 @@ void E3Manager::ProcessE3SubscriptionResponse(const json& response, const std::s
             // Confirm subscription: update with granted values from agent
             agent.subscription->subscription_id = response.value("subscriptionId", 0u);
             agent.subscription->status = SubscriptionStatus::CONFIRMED;
-            if (response.contains("telemetryGrantedList")) {
+            if (response.contains("telemetryIdentifierList")) {
                 agent.subscription->telemetry_ids = 
-                    response["telemetryGrantedList"].get<std::vector<uint32_t>>();
+                    response["telemetryIdentifierList"].get<std::vector<uint32_t>>();
             }
             if (response.contains("periodicity")) {
                 agent.subscription->periodicity_us = response["periodicity"].get<uint32_t>();
@@ -1146,6 +1146,7 @@ void E3Manager::ServiceLoop() {
                         std::cout << "Agent " << agent_name << ": Subscription expired after "
                                   << agent.subscription->subscription_time_s << "s" << std::endl;
                         ClearSubscription(agent, agent_name);
+                        agent.auto_subscribe_active = false;
                     }
                 }
             }

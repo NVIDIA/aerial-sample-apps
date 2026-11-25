@@ -288,7 +288,7 @@ HTML_TEMPLATE = '''
                 title: '',
                 xaxis: { 
                     title: { text: 'PRB Index', font: { size: 16 } },
-                    range: [0, 273],
+                    range: [0, prb_power.length],
                     tickfont: { size: 14 }
                 },
                 yaxis: { 

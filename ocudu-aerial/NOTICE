@@ -1,0 +1,36 @@
+OCUDU-Aerial
+
+NVIDIA-authored files in this repository, other than the components below,
+are under the Apache License, Version 2.0. See LICENSE. That license does
+not replace the terms of the components listed here.
+
+- ocudu
+  https://gitlab.com/ocudu/ocudu
+  License: BSD-3-Clause-Open-MPI
+  See: ocudu/LICENSE
+
+- OCUDU Aerial L1 plugin
+  Nested submodule of ocudu, checked out at ocudu/plugins/aerial.
+  License: BSD-3-Clause-Open-MPI. These terms are preserved as shipped
+  in the plugin; they are not Apache-2.0.
+  See: ocudu/plugins/aerial/LICENSE
+
+- NVIDIA Aerial CUDA-Accelerated RAN
+  https://github.com/NVIDIA/aerial-cuda-accelerated-ran
+  License: Apache License 2.0
+  See: aerial-cuda-accelerated-ran/LICENSE
+
+External materials downloaded when building the containers, and not
+included in this repository:
+
+- Open5GS, https://github.com/open5gs/open5gs
+  License: GNU AGPL-3.0
+  Built from the tag in ocudu/docker/open5gs/Dockerfile, currently v2.7.6.
+
+- Ubuntu base images pulled from Docker Hub by the 5GC and gNB Dockerfiles,
+  under Ubuntu's own terms.
+
+- The NVIDIA Aerial container named by AERIAL_IMAGE (by default
+  nvcr.io/nvidia/aerial/aerial-cuda-accelerated-ran:26-2-cubb).
+  The git tree of Aerial CUDA-Accelerated RAN is Apache-2.0; the pulled
+  container image is governed by the license terms shipped with that image.

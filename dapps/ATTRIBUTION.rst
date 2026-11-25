@@ -14,7 +14,7 @@ These images and their bundled software are governed by licenses and
 terms as described below:
 
 - **NVIDIA content**: The `NVIDIA Software License Agreement <https://www.nvidia.com/en-us/agreements/enterprise-software/nvidia-software-license-agreement/>`_
-  and the `Product-Specific Terms for NVIDIA AI Products <https://www.nvidia.com/en-us/agreements/enterprise-software/product-specific-terms-for-nvidia-ai-products/>`_.
+  and the `Product-Specific Terms for NVIDIA AI Products <https://www.nvidia.com/en-us/agreements/enterprise-software/product-specific-terms-for-ai-products/>`_.
 - **3rd party content**: Components and licenses as listed below.
 
 The applications directly use the following NVIDIA components, which are

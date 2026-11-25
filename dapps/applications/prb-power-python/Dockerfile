@@ -31,6 +31,7 @@ RUN pip install -r /tmp/deps/requirements.txt
 # Copy build sources and app files
 COPY common /opt/src/common
 COPY CMakeLists.txt /opt/src/CMakeLists.txt
+COPY LICENSE ATTRIBUTION.rst /opt/src/
 COPY applications/prb-power-python /opt/src/applications/prb-power-python
 
 # Build the C++ application

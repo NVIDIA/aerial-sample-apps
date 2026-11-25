@@ -14,7 +14,7 @@ Subscriptions that mix the two paths receive separate indications from each. See
 
 **Payload structure.** Slot-shared scalars (`timestamp`, `timestamp_tai`, `sfn`, `slot`, `n_cells`) sit at the `protocolData` root. All per-cell data lives in a `cells[]` array, one entry per active cell in the slot, each carrying its own shared memory references and a nested `ues[]` array of per-UE fields. Single-cell dApps read `cells[0]`; multi-cell dApps iterate `cells[]`.
 
-All shared memory data types use row-major memory layout with ping-pong buffering.
+All shared memory data types use ping-pong buffering. Array shapes in this document are row-major (C order): the last index changes fastest in memory.
 
 ## Shared Memory Layout
 
@@ -52,7 +52,9 @@ The E3 Agent creates a single POSIX shared memory region (default key: `/e3_ran_
 
 The header fields (`fh_buffer_size`, `pusch_buffer_size`, `hest_buffer_size`, `srs_iq_buffer_size`, `srs_rb_snr_buffer_size`, `srs_hest_buffer_size`, etc.) are written by the E3 Agent (RAN Node) at startup and read by the dApp to compute offsets into each buffer region.
 
-The buffer regions are shared across all cells; there is no per-cell region. Within a slot, each active cell writes into the same ping-pong buffer and locates its data through its own `cells[]` entry: fixed-stride buffers (FH IQ, SRS IQ) give each cell a distinct row via its `*_write_index`; PUSCH H-estimates pack each cell's blob back-to-back and start at a per-cell `hest_row_byte_offset`; SRS H-est and SRS RbSNR pack one blob per UE, sliced directly by the per-UE `srs_hest_offset`/`srs_rb_snr_offset` in `ues[]`. Every offset computation in the sections below is therefore scoped to one `cells[]` element.
+The buffer regions are shared across all cells; there is no per-cell region. Within a slot, each active cell writes into the same ping-pong buffer and locates its data through its own `cells[]` entry: FH IQ gives each cell a fixed-size row via its `fh_write_index`; SRS IQ packs one row per cell sized by its `n_rx_ant_srs` and starts it at `srs_iq_row_byte_offset`; PUSCH H-estimates pack each cell's blob back-to-back and start at a per-cell `hest_row_byte_offset`; PUSCH PDUs pack every UE's transport block back-to-back across slots and cells, sliced directly by the per-UE `pdu_offset`/`pdu_len` in `ues[]`; SRS H-est and SRS RbSNR pack one blob per UE, sliced directly by the per-UE `srs_hest_offset`/`srs_rb_snr_offset` in `ues[]`. Every offset computation in the sections below is therefore scoped to one `cells[]` element.
+
+Each FH row holds 4 antennas x 14 symbol lines of 273 PRB x 12 subcarriers x I/Q (6552 int16 per line). Cells of one slot take consecutive rows, and the ping buffer swaps to pong when full; each `cells[]` entry carries its `fh_buffer_index` and `fh_write_index`. Below 100 MHz only the first `n_prb_ul_bwp` PRBs of each line carry data (see [IQ Samples](#iq-samples)).
 
 Each buffer is a table with a fixed row capacity, configured per data type in `cuphycontroller` (`num_rows_fh`, `num_rows_srs_hest`, etc.). Rows fill top-down across slots with no gaps; when all rows are used the buffer is full and writes switch to its pair (`*_buffer_index` 0 or 1), so a reader can read or copy out the data before it is reused. The two buffer types differ only in how a row is sized and addressed.
 
@@ -123,6 +125,8 @@ iq_samples = [N_ANTS][N_SYMBOLS][N_PRBS][N_SC_PER_PRB][2]
 **Total samples**: 4 * 14 * 273 * 12 * 2 = **366,912 int16 values**
 **Total size**: 733,824 bytes (~717 KB per slot)
 
+**Bandwidths below 100 MHz.** The row keeps the 273 PRB layout at every bandwidth. Only PRBs `0` to `n_prb_ul_bwp - 1` carry data (per cell, from `n_prb_ul_bwp` in `cells[]`); the rest are zero. Slice the PRB axis to `n_prb_ul_bwp` to get the carrier.
+
 #### Memory Layout (Row-Major)
 
 Data stored as flat `int16` array in this order:
@@ -188,7 +192,7 @@ In multi-UE slots, cuPHY groups UEs by frequency allocation (FDM) or spatial mul
 Each group's H-estimate blob has shape:
 
 ```
-h_group = [N_DMRS][N_SUBCARRIERS][N_BS_ANTS][N_LAYERS_GROUP]
+h_group = [N_DMRS][N_SUBCARRIERS][N_LAYERS_GROUP][N_BS_ANTS]
 ```
 
 **Where:**
@@ -205,7 +209,7 @@ The SHM row for one slot contains all groups' H-estimate blobs concatenated:
 SHM Row (one per slot):
 ┌─────────────────────────────────────────────┬─────────────────────────────────────────────┐
 │  Group 0 H-est blob                         │  Group 1 H-est blob                         │
-│  [N_DMRS][N_SUBCARRIERS_0][N_BS_ANTS][NL_0] │  [N_DMRS][N_SUBCARRIERS_1][N_BS_ANTS][NL_1] │
+│  [N_DMRS][N_SUBCARRIERS_0][NL_0][N_BS_ANTS] │  [N_DMRS][N_SUBCARRIERS_1][NL_1][N_BS_ANTS] │
 └─────────────────────────────────────────────┴─────────────────────────────────────────────┘
 ^                                              ^
 h_offset=0                                     h_offset=X
@@ -244,28 +248,28 @@ Each element of `ues[]` in the indication JSON provides:
 Within each group blob, data is stored as a flat array of `std::complex<float>`:
 
 ```
-[dmrs_0][sc_0][ant_0][layer_0][Real,Imag]
-[dmrs_0][sc_0][ant_0][layer_1][Real,Imag]  // if N_LAYERS_GROUP > 1
+[dmrs_0][sc_0][layer_0][ant_0][Real,Imag]
+[dmrs_0][sc_0][layer_0][ant_1][Real,Imag]
+[dmrs_0][sc_0][layer_0][ant_2][Real,Imag]
+[dmrs_0][sc_0][layer_0][ant_3][Real,Imag]
+[dmrs_0][sc_0][layer_1][ant_0][Real,Imag]  // if N_LAYERS_GROUP > 1
 ...
-[dmrs_0][sc_0][ant_1][layer_0][Real,Imag]
-[dmrs_0][sc_0][ant_2][layer_0][Real,Imag]
-[dmrs_0][sc_0][ant_3][layer_0][Real,Imag]
-[dmrs_0][sc_1][ant_0][layer_0][Real,Imag]
+[dmrs_0][sc_1][layer_0][ant_0][Real,Imag]
 ...
-[dmrs_0][sc_N_SUBCARRIERS-1][ant_N_BS_ANTS-1][layer_N_LAYERS_GROUP-1][Real,Imag]
-[dmrs_1][sc_0][ant_0][layer_0][Real,Imag]
+[dmrs_0][sc_N_SUBCARRIERS-1][layer_N_LAYERS_GROUP-1][ant_N_BS_ANTS-1][Real,Imag]
+[dmrs_1][sc_0][layer_0][ant_0][Real,Imag]
 ...
-[dmrs_N_DMRS-1][sc_N_SUBCARRIERS-1][ant_N_BS_ANTS-1][layer_N_LAYERS_GROUP-1][Real,Imag]
+[dmrs_N_DMRS-1][sc_N_SUBCARRIERS-1][layer_N_LAYERS_GROUP-1][ant_N_BS_ANTS-1][Real,Imag]
 ```
 
 #### Index Formula
 
 ```cpp
-// Within a group blob, element at [dmrs][subcarrier][antenna][layer]:
-idx = dmrs * (N_SUBCARRIERS * N_BS_ANTS * N_LAYERS_GROUP) +
-      subcarrier * (N_BS_ANTS * N_LAYERS_GROUP) +
-      antenna * N_LAYERS_GROUP +
-      layer
+// Within a group blob, element at [dmrs][subcarrier][layer][antenna]:
+idx = dmrs * (N_SUBCARRIERS * N_LAYERS_GROUP * N_BS_ANTS) +
+      subcarrier * (N_LAYERS_GROUP * N_BS_ANTS) +
+      layer * N_BS_ANTS +
+      antenna
 ```
 
 #### Memory Access Pattern (C++)
@@ -300,16 +304,17 @@ for (const auto& cell : indication_payload["cells"]) {
         uint16_t layer_off    = ue.value("layer_offset", 0u);   // always 0 for FDM
         uint32_t n_layers_grp = h_size / (n_dmrs * n_sc * n_bs_ants);
 
-        // h_ptr -> contiguous block shaped [n_dmrs][n_sc][n_bs_ants][n_layers_grp] (row-major)
+        // h_ptr -> contiguous block shaped [n_dmrs][n_sc][n_layers_grp][n_bs_ants] (row-major)
         if (n_layers_ue == n_layers_grp) {
             // FDM (common case): entire block is this UE's H — zero-copy
             process(h_ptr, h_size * sizeof(std::complex<float>));
         } else {
             // MU-MIMO (not typical in current Aerial testbed): extract this UE's layers
-            std::vector<std::complex<float>> ue_h(n_dmrs * n_sc * n_bs_ants * n_layers_ue);
-            for (uint32_t i = 0; i < n_dmrs * n_sc * n_bs_ants; ++i)
-                for (uint8_t l = 0; l < n_layers_ue; ++l)
-                    ue_h[i * n_layers_ue + l] = h_ptr[i * n_layers_grp + layer_off + l];
+            const uint32_t ue_chunk = n_layers_ue * n_bs_ants;
+            std::vector<std::complex<float>> ue_h(n_dmrs * n_sc * ue_chunk);
+            for (uint32_t i = 0; i < n_dmrs * n_sc; ++i)
+                std::copy_n(h_ptr + (i * n_layers_grp + layer_off) * n_bs_ants, ue_chunk,
+                            ue_h.data() + i * ue_chunk);
             process(ue_h.data(), ue_h.size() * sizeof(std::complex<float>));
         }
     }
@@ -328,10 +333,10 @@ def get_ue_hest(hest_blob, ue_row, n_bs_ants):
 
     # hest_blob is float32 with interleaved real/imag; h_off/h_size are in float2 units
     grp = hest_blob[h_off * 2 : (h_off + h_size) * 2]
-    grp = grp.reshape(-1, 2).view(np.complex64).reshape(n_dmrs, n_sc, n_bs_ants, n_layers_grp)
+    grp = grp.reshape(-1, 2).view(np.complex64).reshape(n_dmrs, n_sc, n_layers_grp, n_bs_ants)
 
     lo = int(ue_row['layerOffset'])
-    return grp[:, :, :, lo : lo + int(ue_row['nrOfLayers'])]
+    return grp[:, :, lo : lo + int(ue_row['nrOfLayers']), :]
 ```
 
 For a complete working Python example, see the [`datalake_hest_per_ue.ipynb`](https://github.com/NVIDIA/aerial-cuda-accelerated-ran/blob/main/pyaerial/notebooks/datalake_hest_per_ue.ipynb) notebook in the [NVIDIA Aerial CUDA Accelerated RAN (ACAR)](https://github.com/NVIDIA/aerial-cuda-accelerated-ran) repository under `pyaerial/notebooks/`.
@@ -368,7 +373,7 @@ srs_iq = [N_ANTS][N_SRS_SYMBOLS][N_PRBS][N_SC_PER_PRB][2]
 **Total samples (4 ant)**: 4 * 6 * 273 * 12 * 2 = **157,248 int16 values**
 **Total size (4 ant)**: 314,496 bytes (~307 KB per cell per slot)
 
-Note: the buffer is sized for the worst-case maximum (273 PRB, 6 symbols, all SRS antennas), regardless of how much of the slot is actually populated by SRS sequences. dApps should always read the full row stride and clip to the first `srs_cell_n_srs_sym` symbols if only the populated SRS region is of interest. Use `srs_cell_start_sym` to place those symbols within the 14-symbol slot, for example when correlating with PUSCH data.
+Note: the buffer is sized for the worst-case maximum (273 PRB, 6 symbols, 4 SRS antennas), regardless of how much of the slot is actually populated by SRS sequences. Each row holds `n_rx_ant_srs * 39312` int16 and rows are packed, so locate a row by `srs_iq_row_byte_offset`, not by row index. Read all 6 symbols of each antenna and clip to the first `srs_cell_n_srs_sym` symbols if only the populated SRS region is of interest. Use `srs_cell_start_sym` to place those symbols within the 14-symbol slot, for example when correlating with PUSCH data. The PRB axis works as for [IQ Samples](#iq-samples): only PRBs below `n_prb_ul_bwp` carry data.
 
 #### Memory Layout (Row-Major)
 
@@ -425,7 +430,7 @@ for (const auto& cell : indication_payload["cells"]) {
 
 Per-UE SRS channel estimates produced by the cuPHY SRS pipeline. Each estimate captures the complex channel response between each receive antenna and each SRS antenna port, sampled at PRG (Physical Resource Block Group) granularity across the UE's allocated bandwidth. Stored as `int16` complex pairs (`short2`) for compactness and ClickHouse compatibility.
 
-One blob per UE per SRS slot, packed contiguously in the cell's buffer row. The actual valid byte count is reported in `srs_hest_size`, and its position by `srs_hest_offset`. Within a cell with multiple UEs, each UE occupies a contiguous region; offsets and sizes are in `ues[]`.
+One blob per UE per SRS slot, packed back-to-back in the SRS H-est buffer shared by all cells. The actual valid byte count is reported in `srs_hest_size`, and its position by `srs_hest_offset`, a byte offset from the start of that buffer; no per-cell offset is added. Offsets and sizes are in `ues[]`.
 
 #### Data Format
 
@@ -436,7 +441,7 @@ One blob per UE per SRS slot, packed contiguously in the cell's buffer row. The 
 #### Per-UE Dimensions
 
 ```
-srs_hest_ue = [N_ANT_PORTS][N_RX_ANT_SRS][N_PRG]   (column-major in cuPHY)
+srs_hest_ue = [N_ANT_PORTS][N_RX_ANT_SRS][N_PRG]
 ```
 
 **Where:**
@@ -453,16 +458,18 @@ Each element of `ues[]` in the SRS indication JSON provides:
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `srs_hest_offset` | uint32 | **Byte** offset of this UE's blob within the cell's SHM buffer |
+| `srs_hest_offset` | uint32 | **Byte** offset of this UE's blob from the start of the SRS H-est buffer (shared by all cells) |
 | `srs_hest_size` | uint32 | Valid **byte** count of this UE's blob |
 | `srs_n_valid_prg` | uint16 | Number of valid PRGs for this UE |
 | `srs_ant_ports` | uint8 | SRS antenna ports for this UE |
+| `srs_start_prg` | uint16 | Absolute PRG index of blob entry 0 |
+| `srs_start_valid_prg` | uint16 | Absolute PRG index of the first valid estimate |
 
 The receive-antenna count `n_rx_ant_srs` is published per cell (in `cells[]`), not per UE.
 
 #### Memory Layout
 
-cuPHY emits the per-UE estimate as a **column-major** tensor with PRG as the fastest-changing axis. When reading into NumPy (row-major by default), reshape with the dimensions reversed and then transpose (or use `order='F'`).
+PRG is the fastest-changing axis, so a NumPy `reshape(n_ant_ports, n_rx_ant_srs, n_prg)` of the blob gives the shape above directly.
 
 UE blobs are packed contiguously within the buffer. Consumers must use `srs_hest_offset` and `srs_hest_size` to bound reads.
 
@@ -488,7 +495,7 @@ for (const auto& cell : indication_payload["cells"]) {
         if (bytes == 0) continue;
 
         // Zero-copy: ue_h points directly into the mapped SHM region.
-        // Column-major blob shaped [srs_ant_ports][n_rx_ant_srs][srs_hest_n_prb_grps] of short2.
+        // Blob shaped [srs_ant_ports][n_rx_ant_srs][srs_hest_n_prb_grps] of short2.
         const int16_t* ue_h = reinterpret_cast<const int16_t*>(base + off);
         process(ue_h, bytes);
     }
@@ -506,8 +513,7 @@ def get_ue_srs_hest(hest_blob_int16, ue_row, n_rx_ant_srs):
 
     raw = hest_blob_int16[off : off + n_int16]                  # int16, I/Q interleaved
     cx  = raw.reshape(-1, 2).view(np.dtype([('re','i2'),('im','i2')]))
-    # cuPHY column-major [n_ports][n_rx_ant][n_prg] -> NumPy: reshape reversed + transpose
-    cx  = cx.reshape(n_prg, n_rx_ant_srs, n_ports).transpose(2, 1, 0)
+    cx  = cx.reshape(n_ports, n_rx_ant_srs, n_prg)
     return cx   # shape [n_ports, n_rx_ant_srs, n_prg]
 ```
 
@@ -541,9 +547,10 @@ Each element of `ues[]` in the SRS indication JSON provides:
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `srs_rb_snr_offset` | uint32 | **Byte** offset of this UE's blob within the cell's SHM buffer |
+| `srs_rb_snr_offset` | uint32 | **Byte** offset of this UE's blob from the start of the SRS RbSNR buffer (shared by all cells) |
 | `srs_rb_snr_size` | uint32 | Valid **byte** count = `srs_n_valid_prg * sizeof(float)` |
 | `srs_n_valid_prg` | uint16 | PRG count |
+| `srs_start_valid_prg` | uint16 | Absolute PRG index of the first valid PRG |
 
 #### Memory Access Pattern (C++)
 
@@ -580,7 +587,7 @@ for (const auto& cell : indication_payload["cells"]) {
 | **Indication path** | PUSCH | PUSCH | SRS | SRS | SRS |
 | **Storage Type** | `int16` (FP16 encoded) | `std::complex<float>` | `int16` (FP16 encoded) | `int16` (`short2` complex) | `float32` |
 | **Typical Size (4 ant, max BW)** | ~717 KB per slot | Varies by allocation and number of UE groups | ~307 KB per cell per SRS slot | ~17 KB per UE (worst case) | ~1 KB per UE |
-| **Dimensions** | `[N_ANTS, 14, 273, 12, 2]` | Per group: `[N_DMRS, N_SC, N_BS_ANTS, N_LAYERS_GROUP]` | `[N_ANTS, 6, 273, 12, 2]` | Per UE: `[N_ANT_PORTS, N_RX_ANT_SRS, N_PRG]` (column-major) | Per UE: `[N_VALID_PRG]` |
+| **Dimensions** | `[N_ANTS, 14, 273, 12, 2]` | Per group: `[N_DMRS, N_SC, N_LAYERS_GROUP, N_BS_ANTS]` | `[N_ANTS, 6, 273, 12, 2]` | Per UE: `[N_ANT_PORTS, N_RX_ANT_SRS, N_PRG]` | Per UE: `[N_VALID_PRG]` |
 | **Layout** | Single contiguous block per cell | Concatenated per-group blobs per cell; per-UE slicing via `ues[]` | One block per cell | Contiguous per-UE blobs via `srs_hest_offset`/`srs_hest_size` | Contiguous per-UE blobs via `srs_rb_snr_offset`/`srs_rb_snr_size` |
 | **Update Rate** | Every PUSCH slot | Per PUSCH allocation | Every SRS slot (per cell) | Per SRS allocation (per UE) | Per SRS allocation (per UE) |
 
@@ -670,7 +677,7 @@ SRS IQ + channel estimates + per-RB SNR + per-UE metadata (one entry per active 
     "srs_iq_samples": {
       "shm_name": "/e3_ran_buffers",
       "srs_iq_buffer_index": 0,
-      "srs_iq_write_index": 7,
+      "srs_iq_write_index": 3,
       "srs_iq_row_byte_offset": 943488
     },
     "srs_hest": {
@@ -707,7 +714,7 @@ Large data streams (IQ samples, H estimates, SRS IQ, SRS H estimates, SRS per-RB
 - Efficient memory usage
 - Direct memory access when the inference engine supports system shared memory (e.g., Triton)
 
-Small scalar metadata (sfn, slot, timestamp, mcs_index, rb_size, srs_wideband_snr, etc.) is delivered inline as JSON fields within the `protocolData` object of the indication message.
+Small scalar metadata (sfn, slot, timestamp, mcs_index, rb_size, srs_wideband_snr, etc.) is delivered inline as JSON fields within the `protocolData` object of the indication message. A float-valued field that L1 could not compute is sent as `null`, which consumers must distinguish from a real measurement of zero (see `application_development_guide.md` for the read pattern).
 
 ### Ping-Pong Buffering
 
@@ -715,5 +722,5 @@ All data types use dual buffers (`buffer_index: 0 or 1`). Buffer sizes are confi
 
 ### Multi-Cell
 
-A single E3 Agent serves the whole cell group; every indication carries one `cells[]` entry per active cell (`n_cells` at the root), and the shared buffers hold one packed or fixed-stride region per cell per slot. Per-UE data is always sliced within the owning cell's blob: `h_offset`/`h_size` for H-estimates, `pdu_offset`/`pdu_len` for PUSCH PDU bytes, and `srs_hest_offset`/`srs_rb_snr_offset` for the SRS blobs.
+A single E3 Agent serves the whole cell group; every indication carries one `cells[]` entry per active cell (`n_cells` at the root), and the shared buffers hold one packed or fixed-stride region per cell per slot. PUSCH H-estimates are sliced within the owning cell's blob via `h_offset`/`h_size`. The other per-UE offsets count from the start of a region shared by all cells: `pdu_offset`/`pdu_len` from the start of the PUSCH buffer, and `srs_hest_offset`/`srs_rb_snr_offset` from the start of the SRS H-est and RbSNR buffers.
 

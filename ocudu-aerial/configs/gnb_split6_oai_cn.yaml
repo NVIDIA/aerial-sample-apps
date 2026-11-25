@@ -1,0 +1,127 @@
+#
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+# http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+# gnb_split6.yml pointed at the OAI CN from
+# oai-cn5g/docker-compose.yaml. AMF is 192.168.70.132. The gNB bind address
+# is 192.168.70.140 on oai-cn5g-public-net (192.168.70.128/26). 192.168.70.129
+# is that bridge's gateway. TAC is 1 (config.yaml plmn_support_list tac 0x0001).
+# Select with GNB_CONFIG_FILE=gnb_split6_oai_cn.yaml. The gNB container must
+# own 192.168.70.140 on that network.
+
+cu_cp:
+  amf:
+    addrs: 192.168.70.132
+    port: 38412
+    bind_addrs: 192.168.70.140
+    supported_tracking_areas:
+      - tac: 1
+        plmn_list:
+          - plmn: "00101"
+            tai_slice_support_list:
+              - sst: 1
+
+cell_cfg:
+  dl_arfcn: 650000
+  band: 78
+  channel_bandwidth_MHz: 100
+  common_scs: 30
+  plmn: "00101"
+  tac: 1
+  pci: 1
+  nof_antennas_dl: 4
+  nof_antennas_ul: 4
+  ta:
+    ta_cmd_offset_threshold: 3
+  prach:
+    prach_config_index: 159
+    prach_root_sequence_index: 1
+    zero_correlation_zone: 14
+    preamble_rx_target_pw: -126
+  ssb:
+    ssb_block_power_dbm: -12
+  pdcch:
+    dedicated:
+      coreset1_l_crb: 96
+  pdsch:
+    min_rb_size: 1
+    max_rb_size: 273
+    start_rb: 0
+    end_rb: 273
+    enable_csi_rs_pdsch_multiplexing: false
+    olla_cqi_inc_step: 0.001
+    olla_target_bler: 0.1
+    max_consecutive_kos: 1000
+    max_rank: 4
+  pusch:
+    min_rb_size: 1
+    max_rb_size: 273
+    start_rb: 0
+    end_rb: 273
+    p0_nominal_with_grant: -100
+    enable_cl_loop_pw_control: true
+    target_sinr: 25.0
+    enable_phr_bw_adaptation: true
+    enable_transform_precoding: false
+    beta_offset_ack_idx_2: 11
+    olla_target_bler: 0.1
+    min_k2: 2
+  pucch:
+    p0_nominal: -96
+    min_k1: 2
+  csi:
+    pwr_ctrl_offset: 0
+    csi_rs_period: 20
+  tdd_ul_dl_cfg:
+    dl_ul_tx_period: 4
+    nof_dl_slots: 4
+    nof_dl_symbols: 0
+    nof_ul_slots: 0
+    nof_ul_symbols: 0
+    pattern2:
+      dl_ul_tx_period: 6
+      nof_dl_slots: 3
+      nof_dl_symbols: 0
+      nof_ul_slots: 2
+      nof_ul_symbols: 4
+
+log:
+  filename: /tmp/gnb.log
+  all_level: warning
+  mac_level: debug
+
+pcap:
+  mac_enable: false
+  mac_type: dlt
+  mac_filename: /tmp/gnb_mac.pcap
+  ngap_enable: true
+  ngap_filename: /tmp/gnb_ngap.pcap
+
+metrics:
+  autostart_stdout_metrics: true
+  enable_json: true
+
+remote_control:
+  bind_addr: 0.0.0.0
+  enabled: true
+
+expert_execution:
+  affinities:
+    main_pool_cpus: "${GNB_MAIN_POOL_CPUS:-12-18}"
+    main_pool_pinning: ${GNB_MAIN_POOL_PINNING:-mask}
+  threads:
+    main_pool:
+      nof_threads: ${GNB_MAIN_POOL_NOF_THREADS:-4}
+      task_queue_size: 4096

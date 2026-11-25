@@ -1,24 +1,5 @@
 Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 
-The contents of this repository are licensed under the Apache 2.0 license.
-When building the containers, you will download NVIDIA and third-party
-software and materials, which are governed by their respective licenses
-as described in ATTRIBUTION.rst.
-
-NOTICE AND DISCLAIMER: This software automatically retrieves, accesses or
-interacts with external materials. Those retrieved materials are not
-distributed with this software and are governed solely by separate terms,
-conditions and licenses. You are solely responsible for finding, reviewing
-and complying with all applicable terms, conditions, and licenses, and for
-verifying the security, integrity and suitability of any retrieved materials
-for your specific use case. This software is provided "AS IS", without
-warranty of any kind. The author makes no representations or warranties
-regarding any retrieved materials, and assumes no liability for any losses,
-damages, liabilities or legal consequences from your use or inability to use
-this software or any retrieved materials. Use this software and the retrieved
-materials at your own risk.
-
-###########################################################################
 
                                  Apache License
                            Version 2.0, January 2004
@@ -200,7 +181,7 @@ materials at your own risk.
    APPENDIX: How to apply the Apache License to your work.
 
       To apply the Apache License to your work, attach the following
-      boilerplate notice, with the fields enclosed by brackets "{}"
+      boilerplate notice, with the fields enclosed by brackets "[]"
       replaced with your own identifying information. (Don't include
       the brackets!)  The text should be enclosed in the appropriate
       comment syntax for the file format. We also recommend that a
@@ -208,7 +189,7 @@ materials at your own risk.
       same "printed page" as the copyright notice for easier
       identification within third-party archives.
 
-   Copyright 2026 NVIDIA Corporation
+   Copyright [yyyy] [name of copyright owner]
 
    Licensed under the Apache License, Version 2.0 (the "License");
    you may not use this file except in compliance with the License.
@@ -221,3 +202,21 @@ materials at your own risk.
    WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
    See the License for the specific language governing permissions and
    limitations under the License.
+
+The contents of this repository are licensed under the Apache 2.0 license.
+When building the containers, you will download NVIDIA and third-party
+software and materials, which are governed by their respective licenses
+as described in ATTRIBUTION.rst.
+
+NOTICE AND DISCLAIMER: This software automatically retrieves, accesses or
+interacts with external materials. Those retrieved materials are not
+distributed with this software and are governed solely by separate terms,
+conditions and licenses. You are solely responsible for finding, reviewing
+and complying with all applicable terms, conditions, and licenses, and for
+verifying the security, integrity and suitability of any retrieved materials
+for your specific use case. This software is provided "AS IS", without
+warranty of any kind. The author makes no representations or warranties
+regarding any retrieved materials, and assumes no liability for any losses,
+damages, liabilities or legal consequences from your use or inability to use
+this software or any retrieved materials. Use this software and the retrieved
+materials at your own risk.

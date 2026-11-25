@@ -1,0 +1,8 @@
+[submodule "aerial-cuda-accelerated-ran"]
+	path = aerial-cuda-accelerated-ran
+	url = https://github.com/NVIDIA/aerial-cuda-accelerated-ran.git
+	branch = 26.2.0
+[submodule "ocudu"]
+	path = ocudu
+	url = https://gitlab.com/ocudu/ocudu.git
+	branch = feat/aerial-plugin-rel-26-2
